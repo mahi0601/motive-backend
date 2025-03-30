@@ -1,0 +1,24 @@
+### ✅ Add a Comment (Requires Auth Token)
+POST http://localhost:8080/api/comments
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1NzE2MSwiZXhwIjoxNzQzMzYxOTYxfQ.xj5R4Q_ZQEKndyGMtVZx8MZuXMrnd8uqXhZN-bnNy9c
+
+{
+  "taskId": "64fd123abc45678912345678",
+  "text": "This is a test comment added correctly using REST Client"
+}
+###
+
+### ✅ Get All Comments for a Task (Requires Auth Token)
+GET http://localhost:8080/api/comments/64fd123abc45678912345678
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1NzE2MSwiZXhwIjoxNzQzMzYxOTYxfQ.xj5R4Q_ZQEKndyGMtVZx8MZuXMrnd8uqXhZN-bnNy9c
+
+###
+
+### ℹ️ Notes:
+# - Task ID used here: 64fd123abc45678912345678 (from your actual database).
+# - This will return both existing comments:
+#     1. "Make sure to test all APIs before deployment."
+#     2. "Add proper validation in the controller."
+# - Add a new comment using the POST block above to test insert functionality.
+# - You can reuse this token until it expires.

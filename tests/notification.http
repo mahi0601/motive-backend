@@ -1,0 +1,22 @@
+### ✅ Get All Notifications (Requires Auth Token)
+GET http://localhost:8080/api/notifications
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+###
+
+### ✅ Mark a Notification as Read (Requires Auth Token)
+PUT http://localhost:8080/api/notifications/replace_with_notification_id/read
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+###
+
+### ✅ Clear All Notifications (Requires Auth Token)
+DELETE http://localhost:8080/api/notifications/clear
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+###
+
+### ℹ️ Notes:
+# - Replace `replace_with_notification_id` with an actual notification ID from your database.
+# - You can reuse the token until it expires.
+# - Make sure your server is running on port 4000 or update the URL accordingly.

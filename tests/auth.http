@@ -1,0 +1,27 @@
+### 🟢 Register a New User
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "email": "testuser@example.com",
+  "password": "password123"
+}
+
+###
+
+### 🟢 Login User
+POST http://localhost:8080/api/auth/login
+Authorization: Bearer <eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1NzA5NSwiZXhwIjoxNzQzMzYxODk1fQ.f-uqqiEM0ZU1Kd77nCDF-xY79tqZWvYgw-rgqZB49pc>
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com",
+  "password": "password123"
+}
+
+###
+
+### 🟡 Copy Token from Login Response
+# After login, copy the token returned from response and use it in next APIs as:
+# Authorization: Bearer <eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1NzA5NSwiZXhwIjoxNzQzMzYxODk1fQ.f-uqqiEM0ZU1Kd77nCDF-xY79tqZWvYgw-rgqZB49pc>

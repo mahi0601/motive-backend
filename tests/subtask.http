@@ -1,0 +1,41 @@
+### ✅ Create a New Subtask (Requires Auth Token)
+POST http://localhost:8080/api/subtasks
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+{
+  "taskId": "64fd123abc45678912345678",
+  "title": "Set up Mongoose schema",
+  "isCompleted": false
+}
+
+###
+
+### ✅ Get All Subtasks by Task ID (Requires Auth Token)
+GET http://localhost:8080/api/subtasks/64fd123abc45678912345678
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+###
+
+### ✅ Update a Subtask (Requires Auth Token)
+PUT http://localhost:8080/api/subtasks/64fd123abc45678912345678
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+{
+  "title": "Set up Mongoose schema (Updated)",
+  "isCompleted": true
+}
+
+###
+
+### ✅ Delete a Subtask (Requires Auth Token)
+DELETE http://localhost:8080/api/subtasks/64fd123abc45678912345678
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3ZTA1Y2U3N2RjZDI2ZjE4YTQzYTU0YSIsImlhdCI6MTc0Mjc1ODQ1OSwiZXhwIjoxNzQzMzYzMjU5fQ.Ud2xBi7Qsw7tMFBKrMlXHXM4Ro0azNmKcH_ycj3sYEg
+
+###
+
+### ℹ️ Notes:
+# - Replace `replace_with_subtask_id` with actual subtask ID from your DB.
+# - Replace `taskId` with real task ID.
+# - Keep reusing the token until it expires or login again to get a new one.
