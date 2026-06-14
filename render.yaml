@@ -1,0 +1,37 @@
+# Render Blueprint — Motive API (Node + Express + Socket.io).
+# Deploy: push this repo to GitHub → Render → New → Blueprint → pick this repo.
+# Fill MONGO_URI, FRONTEND_URL, COOKIE_DOMAIN in the dashboard; the rest is preset.
+services:
+  - type: web
+    name: motive-api
+    runtime: node
+    # Free plan: $0, but sleeps after ~15 min idle (first request after idle is
+    # slow ~30-60s, and Socket.io connections drop). Switch to "starter" ($7/mo)
+    # when you want it always-on for real-time + instant responses.
+    plan: free
+    region: oregon
+    buildCommand: npm ci
+    startCommand: node src/index.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render injects PORT automatically; the app reads process.env.PORT.
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong 32+ char secret
+      - key: MONGO_URI
+        sync: false # MongoDB Atlas connection string (secret)
+      - key: FRONTEND_URL
+        sync: false # exact frontend origin, e.g. https://app.motive.com
+      # Same registrable domain (app.x.com + api.x.com) → first-party cookies.
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_DOMAIN
+        sync: false # e.g. .motive.com  (leave unset until you add a custom domain)
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL
+        value: 30d

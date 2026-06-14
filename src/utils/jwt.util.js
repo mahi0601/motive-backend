@@ -1,28 +1,18 @@
-// const jwt = require('jsonwebtoken');
-
-// exports.generateToken = (payload) => {
-//   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
-// };
 const jwt = require('jsonwebtoken');
+const config = require('../config/env');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_key'; // fallback if env is missing
+// No insecure fallback secret — config.js guarantees JWT_SECRET exists at boot.
+// A `type` claim distinguishes access vs refresh tokens so one can't be used as the other.
 
-// Generate JWT token
-exports.generateToken = (payload, expiresIn = '7d') => {
-  try {
-    return jwt.sign(payload, JWT_SECRET, { expiresIn });
-  } catch (error) {
-    console.error('❌ Error generating JWT:', error.message);
-    return null;
-  }
-};
+exports.signAccessToken = (userId) =>
+  jwt.sign({ id: userId, type: 'access' }, config.jwt.secret, {
+    expiresIn: config.jwt.accessExpiresIn,
+  });
 
-// Optionally: Verify token helper (useful for auth middlewares)
-exports.verifyToken = (token) => {
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (error) {
-    console.error('❌ Invalid Token:', error.message);
-    return null;
-  }
-};
+exports.signRefreshToken = (userId, tokenVersion) =>
+  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion }, config.jwt.secret, {
+    expiresIn: config.jwt.refreshExpiresIn,
+  });
+
+// Throws on invalid/expired tokens; the error middleware maps it to 401.
+exports.verifyToken = (token) => jwt.verify(token, config.jwt.secret);
