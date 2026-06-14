@@ -23,14 +23,15 @@ services:
       - key: MONGO_URI
         sync: false # MongoDB Atlas connection string (secret)
       - key: FRONTEND_URL
-        sync: false # exact frontend origin, e.g. https://app.motive.com
-      # Same registrable domain (app.x.com + api.x.com) → first-party cookies.
+        sync: false # exact web origin, e.g. https://motive-web.onrender.com
+      # Default .onrender.com URLs put web + API on different domains → the refresh
+      # cookie must be cross-site (None + Secure). Switch to "lax" only once both
+      # are on one registrable domain (app.x.com + api.x.com).
       - key: COOKIE_SAMESITE
-        value: lax
+        value: none
       - key: COOKIE_SECURE
         value: "true"
-      - key: COOKIE_DOMAIN
-        sync: false # e.g. .motive.com  (leave unset until you add a custom domain)
+      # Leave COOKIE_DOMAIN unset for cross-domain .onrender.com hosting.
       - key: ACCESS_TOKEN_TTL
         value: 15m
       - key: REFRESH_TOKEN_TTL
