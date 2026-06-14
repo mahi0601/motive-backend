@@ -1,14 +1,18 @@
-const jwt = require('jsonwebtoken');
+const { verifyToken } = require('../utils/jwt.util');
+const AppError = require('../utils/AppError');
 
-module.exports = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
+module.exports = (req, _res, next) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return next(AppError.unauthorized('No token provided'));
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyToken(token); // { id, type, iat, exp }
+    // Refresh tokens must never authenticate API calls.
+    if (decoded.type !== 'access') throw AppError.unauthorized('Invalid token type');
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(403).json({ error: 'Invalid token' });
+    next(err); // JWT errors are normalized to 401 by the error middleware
   }
 };

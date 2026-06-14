@@ -1,11 +1,14 @@
 const TaskService = require('../services/task.service');
+const asyncHandler = require('../utils/asyncHandler');
+const { getPagination, paginated } = require('../utils/pagination');
 
-exports.getTasks = async (req, res) => {
-  const tasks = await TaskService.getAll(req.user.id);
-  res.json(tasks);
-};
+exports.getTasks = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const { items, total } = await TaskService.getAll(req.user.id, { skip, limit });
+  res.json({ success: true, ...paginated(items, total, { page, limit }) });
+});
 
-exports.createTask = async (req, res) => {
+exports.createTask = asyncHandler(async (req, res) => {
   const task = await TaskService.create(req.body, req.user.id);
-  res.status(201).json(task);
-};
+  res.status(201).json({ success: true, task });
+});

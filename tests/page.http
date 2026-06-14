@@ -1,0 +1,84 @@
+@baseUrl = http://localhost:8080/api
+@token = PASTE_JWT_HERE
+@pageId = PASTE_PAGE_ID_HERE
+@blockId = PASTE_BLOCK_ID_HERE
+
+### Health
+GET {{baseUrl}}/health
+
+### List workspaces (auto-creates default)
+GET {{baseUrl}}/workspaces
+Authorization: Bearer {{token}}
+
+### List pages
+GET {{baseUrl}}/pages
+Authorization: Bearer {{token}}
+
+### Create a page
+POST {{baseUrl}}/pages
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "title": "My First Page", "icon": "📝" }
+
+### Create a nested page
+POST {{baseUrl}}/pages
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "title": "Child Page", "parentId": "{{pageId}}" }
+
+### Get one page
+GET {{baseUrl}}/pages/{{pageId}}
+Authorization: Bearer {{token}}
+
+### Update page title
+PATCH {{baseUrl}}/pages/{{pageId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "title": "Renamed Page", "favorite": true }
+
+### Search pages
+GET {{baseUrl}}/pages/search?q=page
+Authorization: Bearer {{token}}
+
+### List blocks on a page
+GET {{baseUrl}}/pages/{{pageId}}/blocks
+Authorization: Bearer {{token}}
+
+### Create a block
+POST {{baseUrl}}/pages/{{pageId}}/blocks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "type": "heading1", "content": { "text": "Hello World" } }
+
+### Create a to-do block
+POST {{baseUrl}}/pages/{{pageId}}/blocks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "type": "todo", "content": { "text": "Ship Notion features", "checked": false } }
+
+### Update a block
+PATCH {{baseUrl}}/blocks/{{blockId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "content": { "text": "Updated text", "checked": true } }
+
+### Reorder blocks
+PUT {{baseUrl}}/pages/{{pageId}}/blocks/reorder
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "order": [ { "id": "{{blockId}}", "position": 0 } ] }
+
+### Delete a block
+DELETE {{baseUrl}}/blocks/{{blockId}}
+Authorization: Bearer {{token}}
+
+### Archive (delete) a page
+DELETE {{baseUrl}}/pages/{{pageId}}
+Authorization: Bearer {{token}}
