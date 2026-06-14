@@ -12,3 +12,13 @@ exports.createTask = asyncHandler(async (req, res) => {
   const task = await TaskService.create(req.body, req.user.id);
   res.status(201).json({ success: true, task });
 });
+
+exports.updateTask = asyncHandler(async (req, res) => {
+  const task = await TaskService.update(req.params.id, req.body, req.user.id);
+  res.json({ success: true, task });
+});
+
+exports.deleteTask = asyncHandler(async (req, res) => {
+  const result = await TaskService.remove(req.params.id, req.user.id);
+  res.json({ success: true, ...result });
+});
