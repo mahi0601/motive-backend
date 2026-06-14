@@ -6,6 +6,7 @@ const taskSchema = new mongoose.Schema(
     description: String,
     priority: { type: String, enum: ['Low', 'Medium', 'High'], default: 'Low' },
     status: { type: String, enum: ['todo', 'in_progress', 'done'], default: 'todo' },
+    category: { type: String, default: 'Personal' },
     dueDate: Date,
     position: Number,
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

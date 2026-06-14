@@ -16,7 +16,7 @@ exports.create = async (data, userId) => {
 };
 
 exports.update = async (id, data, userId) => {
-  const allowed = ['title', 'description', 'priority', 'status', 'dueDate', 'position'];
+  const allowed = ['title', 'description', 'priority', 'status', 'category', 'dueDate', 'position'];
   const patch = {};
   for (const key of allowed) if (key in data) patch[key] = data[key];
 
