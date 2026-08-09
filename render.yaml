@@ -36,3 +36,14 @@ services:
         value: 15m
       - key: REFRESH_TOKEN_TTL
         value: 30d
+      # Stripe — start with TEST mode keys (sk_test_/whsec_) until checkout is verified end-to-end.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # From the webhook endpoint's "Signing secret" in the Stripe Dashboard
+      # (Developers → Webhooks → add endpoint https://<this-service>/api/payments/webhook).
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: PRO_UPGRADE_PRICE_USD_CENTS
+        value: "999"
+      - key: PRO_UPGRADE_PRICE_INR_PAISE
+        value: "79900"

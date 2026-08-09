@@ -19,6 +19,10 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: '' },
     // Bumped on logout / password change to invalidate all outstanding refresh tokens.
     tokenVersion: { type: Number, default: 0 },
+    // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed —
+    // never set directly from a client request.
+    isPro: { type: Boolean, default: false },
+    stripeCustomerId: { type: String, default: null, select: false },
   },
   { timestamps: true }
 );

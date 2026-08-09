@@ -13,8 +13,10 @@ const workspaceRoutes = require('./workspace.routes');
 const pageRoutes = require('./page.routes');
 const blockRoutes = require('./block.routes');
 const templateRoutes = require('./template.routes');
+const paymentRoutes = require('./payment.routes');
 
 router.use('/auth', authRoutes);
+router.use('/payments', paymentRoutes);
 router.use('/users', userRoutes);
 router.use('/uploads', uploadRoutes);
 router.use('/subtasks', subtaskRoutes);
