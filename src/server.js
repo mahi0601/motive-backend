@@ -13,6 +13,7 @@ const connectDB = require('./config/db');
 const routes = require('./routes/index');
 const errorHandler = require('./middlewares/error.middleware');
 const { initSocket } = require('./sockets/socket.handler');
+const paymentController = require('./controllers/payment.controller');
 
 const app = express();
 
@@ -31,6 +32,10 @@ app.use(
     credentials: true,
   })
 );
+// Stripe webhook needs the raw request body to verify the signature — must be
+// registered BEFORE express.json() so it isn't parsed/re-serialized first.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentController.webhook);
+
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
