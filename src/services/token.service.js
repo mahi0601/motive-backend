@@ -3,8 +3,8 @@ const { signAccessToken, signRefreshToken } = require('../utils/jwt.util');
 
 // Mint an access token (returned to the client) + a refresh token (set as cookie).
 exports.issueTokens = (user) => ({
-  accessToken: signAccessToken(user._id),
-  refreshToken: signRefreshToken(user._id, user.tokenVersion),
+  accessToken: signAccessToken(user.id),
+  refreshToken: signRefreshToken(user.id, user.tokenVersion),
 });
 
 const cookieOptions = () => ({

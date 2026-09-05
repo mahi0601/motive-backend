@@ -1,26 +1,34 @@
-const User = require('../models/user.model');
+const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const { verifyToken } = require('../utils/jwt.util');
+const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
 
+// Password is globally omitted by the Prisma client (see config/prisma.js),
+// so any `user` object here is already safe to send to the client as-is.
 const result = (user) => ({
-  user: user.toJSON(), // strips password hash (see user.model.js)
+  user,
   ...tokenService.issueTokens(user),
 });
 
 exports.register = async ({ name, email, password }) => {
-  const existing = await User.findOne({ email });
+  const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw AppError.conflict('Email already in use');
-  // Password hashed by the model's pre-save hook — never here.
-  const user = await User.create({ name, email, password });
+
+  const user = await prisma.user.create({
+    data: { name, email, password: await hashPassword(password) },
+  });
   return result(user);
 };
 
 exports.login = async ({ email, password }) => {
-  const user = await User.findOne({ email }).select('+password');
+  // Password is globally omitted — opt back in just for this check.
+  const user = await prisma.user.findUnique({ where: { email }, omit: { password: false } });
   if (!user) throw AppError.unauthorized('Invalid credentials');
-  const valid = await user.comparePassword(password);
+  const valid = await comparePassword(password, user.password);
   if (!valid) throw AppError.unauthorized('Invalid credentials');
+
+  delete user.password;
   return result(user);
 };
 
@@ -36,7 +44,7 @@ exports.refresh = async (refreshToken) => {
   }
   if (payload.type !== 'refresh') throw AppError.unauthorized('Invalid token type');
 
-  const user = await User.findById(payload.id);
+  const user = await prisma.user.findUnique({ where: { id: payload.id } });
   if (!user) throw AppError.unauthorized('User no longer exists');
 
   // tokenVersion mismatch → token was revoked (logout / password change elsewhere).
@@ -48,5 +56,5 @@ exports.refresh = async (refreshToken) => {
 // Revoke ALL refresh tokens for the user by bumping their version.
 exports.revokeAll = async (userId) => {
   if (!userId) return;
-  await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
+  await prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
 };
