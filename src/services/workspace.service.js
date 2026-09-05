@@ -1,16 +1,21 @@
-const Workspace = require('../models/workspace.model');
+const prisma = require('../config/prisma');
 
 // Returns the user's workspaces; creates a default one on first access.
 exports.listForUser = async (userId) => {
-  let workspaces = await Workspace.find({
-    $or: [{ ownerId: userId }, { 'members.userId': userId }],
-  }).sort('createdAt');
+  let workspaces = await prisma.workspace.findMany({
+    where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+    include: { members: true },
+    orderBy: { createdAt: 'asc' },
+  });
 
   if (workspaces.length === 0) {
-    const ws = await Workspace.create({
-      name: 'My Workspace',
-      ownerId: userId,
-      members: [{ userId, role: 'owner' }],
+    const ws = await prisma.workspace.create({
+      data: {
+        name: 'My Workspace',
+        ownerId: userId,
+        members: { create: [{ userId, role: 'owner' }] },
+      },
+      include: { members: true },
     });
     workspaces = [ws];
   }
@@ -23,17 +28,19 @@ exports.getDefault = async (userId) => {
 };
 
 exports.create = (data, userId) =>
-  Workspace.create({
-    ...data,
-    ownerId: userId,
-    members: [{ userId, role: 'owner' }],
+  prisma.workspace.create({
+    data: {
+      ...data,
+      ownerId: userId,
+      members: { create: [{ userId, role: 'owner' }] },
+    },
+    include: { members: true },
   });
 
 // True if the user may access the workspace (owner or member).
 exports.canAccess = async (workspaceId, userId) => {
-  const ws = await Workspace.findOne({
-    _id: workspaceId,
-    $or: [{ ownerId: userId }, { 'members.userId': userId }],
+  const ws = await prisma.workspace.findFirst({
+    where: { id: workspaceId, OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
   });
   return !!ws;
 };

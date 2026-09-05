@@ -1,17 +1,8 @@
-const mongoose = require('mongoose');
-const User = require('../models/user.model');
-const Task = require('../models/task.model');
-const Subtask = require('../models/subtask.model');
-const Comment = require('../models/comment.model');
-const Notification = require('../models/notification.model');
-const File = require('../models/file.model');
-const ActivityLog = require('../models/activityLog.model');
-const Page = require('../models/page.model');
-const Block = require('../models/block.model');
-const Workspace = require('../models/workspace.model');
+const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
+const { comparePassword } = require('../utils/password.util');
 
-exports.getProfile = (userId) => User.findById(userId);
+exports.getProfile = (userId) => prisma.user.findUnique({ where: { id: userId } });
 
 exports.updateProfile = async (userId, data) => {
   // Whitelist updatable fields — never let a client patch password/email/tokenVersion here.
@@ -19,62 +10,24 @@ exports.updateProfile = async (userId, data) => {
   ['name', 'avatar'].forEach((k) => {
     if (k in data) patch[k] = data[k];
   });
-  const user = await User.findByIdAndUpdate(userId, patch, { new: true, runValidators: true });
-  if (!user) throw AppError.notFound('User not found');
-  return user;
+  try {
+    return await prisma.user.update({ where: { id: userId }, data: patch });
+  } catch (err) {
+    if (err.code === 'P2025') throw AppError.notFound('User not found');
+    throw err;
+  }
 };
 
-// Delete the account and ALL data owned by the user, atomically when possible.
+// Delete the account and ALL data owned by the user. Every dependent table has
+// an `onDelete: Cascade` FK back to User (or transitively to Task/Page), so a
+// single delete replaces the old manual fan-out + transaction/session dance.
 exports.deleteAccount = async (userId, password) => {
-  const user = await User.findById(userId).select('+password');
+  const user = await prisma.user.findUnique({ where: { id: userId }, omit: { password: false } });
   if (!user) throw AppError.notFound('User not found');
 
-  // Re-authenticate before an irreversible, destructive action.
-  const valid = await user.comparePassword(password);
+  const valid = await comparePassword(password, user.password);
   if (!valid) throw AppError.unauthorized('Incorrect password');
 
-  // IDs needed to reach data that references the user indirectly.
-  const taskIds = (await Task.find({ userId }).select('_id').lean()).map((t) => t._id);
-  const pageIds = (await Page.find({ ownerId: userId }).select('_id').lean()).map((p) => p._id);
-
-  const runDeletes = async (session) => {
-    const opts = session ? { session } : {};
-    await Promise.all([
-      Subtask.deleteMany({ taskId: { $in: taskIds } }, opts),
-      Comment.deleteMany({ $or: [{ userId }, { taskId: { $in: taskIds } }] }, opts),
-      File.deleteMany({ $or: [{ uploadedBy: userId }, { taskId: { $in: taskIds } }] }, opts),
-      ActivityLog.deleteMany({ $or: [{ userId }, { taskId: { $in: taskIds } }] }, opts),
-      Block.deleteMany({ pageId: { $in: pageIds } }, opts),
-      Notification.deleteMany({ userId }, opts),
-    ]);
-    // Delete parents after their children.
-    await Page.deleteMany({ ownerId: userId }, opts);
-    await Task.deleteMany({ userId }, opts);
-    await Workspace.deleteMany({ ownerId: userId }, opts);
-    // Remove the user from workspaces owned by others.
-    await Workspace.updateMany(
-      { 'members.userId': userId },
-      { $pull: { members: { userId } } },
-      opts
-    );
-    await User.deleteOne({ _id: userId }, opts);
-  };
-
-  // Prefer a transaction (all-or-nothing). Standalone MongoDB has no transactions,
-  // so fall back to a best-effort sequential delete.
-  let session;
-  try {
-    session = await mongoose.startSession();
-    await session.withTransaction(() => runDeletes(session));
-  } catch (err) {
-    if (/Transaction|replica set|not supported/i.test(err.message)) {
-      await runDeletes(); // non-transactional fallback (dev / standalone)
-    } else {
-      throw err;
-    }
-  } finally {
-    if (session) session.endSession();
-  }
-
+  await prisma.user.delete({ where: { id: userId } });
   return { deleted: true };
 };
