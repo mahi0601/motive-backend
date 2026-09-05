@@ -9,6 +9,7 @@ const commentRoutes = require('./comment.routes');
 const taskRoutes = require('./task.routes');
 const statsRoutes = require('./statistics.routes');
 const notificationRoutes = require('./notification.routes');
+const activityRoutes = require('./activity.routes');
 const workspaceRoutes = require('./workspace.routes');
 const pageRoutes = require('./page.routes');
 const blockRoutes = require('./block.routes');
@@ -24,6 +25,7 @@ router.use('/comments', commentRoutes);
 router.use('/tasks', taskRoutes);
 router.use('/stats', statsRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/activity', activityRoutes);
 
 // Notion-style workspace
 router.use('/workspaces', workspaceRoutes);
