@@ -6,8 +6,7 @@ const {
   
   const getStatistics = async (req, res) => {
     try {
-      // Assuming you have a middleware that sets req.user._id
-      const userId = req.user._id;
+      const userId = req.user.id;
   
       const taskStats = await getWeeklyTaskStats(userId);
       const priorityStats = await getPriorityStats(userId);
