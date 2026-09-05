@@ -1,24 +1,12 @@
-const mongoose = require('mongoose');
-const config = require('./env');
+const prisma = require('./prisma');
 
-// Connection pooling + sane timeouts so a slow/down DB fails fast instead of
-// hanging requests. maxPoolSize bounds concurrent ops per instance — tune per load.
+// Verifies the DB is actually reachable at boot (Prisma otherwise connects
+// lazily on first query), so a bad DATABASE_URL fails fast here instead of on
+// the first request. Mirrors the old Mongoose connectDB()'s fail-fast intent.
 const connectDB = async () => {
-  mongoose.set('strictQuery', true);
-
-  await mongoose.connect(config.mongoUri, {
-    maxPoolSize: 50,
-    minPoolSize: 5,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-  });
-
-  console.log('✅ MongoDB connected');
-
-  mongoose.connection.on('error', (err) => console.error('MongoDB error:', err.message));
-  mongoose.connection.on('disconnected', () => console.warn('⚠️  MongoDB disconnected'));
-
-  return mongoose.connection;
+  await prisma.$connect();
+  console.log('✅ Postgres (Neon) connected');
+  return prisma;
 };
 
 module.exports = connectDB;

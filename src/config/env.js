@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Fail fast at boot if critical config is missing or insecure, rather than
 // discovering it on the first request in production.
-const REQUIRED = ['MONGO_URI', 'JWT_SECRET'];
+const REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
 
 const missing = REQUIRED.filter((key) => !process.env[key]);
 if (missing.length) {
@@ -19,7 +19,7 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   isProd: process.env.NODE_ENV === 'production',
   port: parseInt(process.env.PORT, 10) || 8080,
-  mongoUri: process.env.MONGO_URI,
+  databaseUrl: process.env.DATABASE_URL,
   jwt: {
     secret: process.env.JWT_SECRET,
     // Short-lived access token (Authorization header) + long-lived refresh token (httpOnly cookie).
