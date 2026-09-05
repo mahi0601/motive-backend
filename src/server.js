@@ -1,7 +1,6 @@
 // src/server.js
 const http = require('http');
 const express = require('express');
-const mongoose = require('mongoose');
 const morgan = require('morgan');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -10,6 +9,7 @@ const cookieParser = require('cookie-parser');
 
 const config = require('./config/env');
 const connectDB = require('./config/db');
+const prisma = require('./config/prisma');
 const routes = require('./routes/index');
 const errorHandler = require('./middlewares/error.middleware');
 const { initSocket } = require('./sockets/socket.handler');
@@ -57,8 +57,13 @@ app.use('/api/auth/login', credentialLimiter);
 app.use('/api/auth/register', credentialLimiter);
 
 // ── Health & readiness ──────────────────────────────────
-app.get('/api/health', (_req, res) => {
-  const dbUp = mongoose.connection.readyState === 1;
+app.get('/api/health', async (_req, res) => {
+  let dbUp = true;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    dbUp = false;
+  }
   res.status(dbUp ? 200 : 503).json({
     status: dbUp ? 'ok' : 'degraded',
     db: dbUp ? 'connected' : 'disconnected',
@@ -82,7 +87,7 @@ connectDB()
     });
   })
   .catch((err) => {
-    console.error('❌ Failed to connect to MongoDB:', err.message);
+    console.error('❌ Failed to connect to the database:', err.message);
     process.exit(1);
   });
 
@@ -90,7 +95,7 @@ connectDB()
 const shutdown = (signal) => {
   console.log(`\n${signal} received — shutting down gracefully…`);
   server.close(() => {
-    mongoose.connection.close(false).then(() => {
+    prisma.$disconnect().then(() => {
       console.log('✅ Closed HTTP server and DB connection.');
       process.exit(0);
     });

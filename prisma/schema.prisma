@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  owner
+  editor
+  viewer
+}
+
+enum BlockType {
+  paragraph
+  heading1
+  heading2
+  heading3
+  bulleted
+  numbered
+  todo
+  toggle
+  quote
+  code
+  divider
+  image
+  callout
+}
+
+enum TaskPriority {
+  Low
+  Medium
+  High
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+}
+
+model User {
+  id               String   @id @default(cuid())
+  name             String
+  email            String   @unique
+  // Never selected by default — see `omit` config in src/config/prisma.js.
+  password         String
+  avatar           String   @default("")
+  // Bumped on logout / password change to invalidate all outstanding refresh tokens.
+  tokenVersion     Int      @default(0)
+  // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed.
+  isPro            Boolean  @default(false)
+  stripeCustomerId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tasks           Task[]
+  pages           Page[]
+  workspacesOwned Workspace[]
+  memberships     WorkspaceMember[]
+  comments        Comment[]
+  filesUploaded   File[]
+  notifications   Notification[]
+  activityLogs    ActivityLog[]
+  templates       Template[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String   @default("My Workspace")
+  icon      String   @default("🏠")
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  pages     Page[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+// Mongo's embedded `members[]` subdocument becomes a join table.
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(editor)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Page {
+  id          String     @id @default(cuid())
+  title       String     @default("Untitled")
+  icon        String     @default("📄")
+  cover       String     @default("")
+  parentId    String?
+  parent      Page?      @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Page[]     @relation("PageTree")
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ownerId     String
+  owner       User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  archived    Boolean    @default(false)
+  favorite    Boolean    @default(false)
+  position    Int        @default(0)
+  blocks      Block[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([parentId])
+  @@index([workspaceId])
+  @@index([ownerId])
+}
+
+model Block {
+  id        String    @id @default(cuid())
+  pageId    String
+  page      Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  type      BlockType @default(paragraph)
+  // Freeform payload: { text, checked, language, url, caption, collapsed, color, ... }
+  content   Json      @default("{}")
+  position  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([pageId])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  priority    TaskPriority @default(Low)
+  status      TaskStatus   @default(todo)
+  category    String       @default("Personal")
+  dueDate     DateTime?
+  position    Int?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subtasks    Subtask[]
+  comments    Comment[]
+  files       File[]
+  activityLogs ActivityLog[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Hot path: "all of a user's tasks, ordered" / date-range lookups.
+  @@index([userId, position])
+  @@index([userId, dueDate])
+}
+
+model Subtask {
+  id        String   @id @default(cuid())
+  title     String
+  done      Boolean  @default(false)
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+}
+
+model File {
+  id         String   @id @default(cuid())
+  name       String
+  url        String
+  uploadedBy String
+  uploader   User     @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+  taskId     String?
+  task       Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([uploadedBy])
+  @@index([taskId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  action      String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  description String?
+  timestamp   DateTime @default(now())
+
+  @@index([userId])
+  @@index([taskId])
+}
+
+// A user-saved custom template: a named snapshot of a page's blocks.
+// `blocks` stays a JSON column (it's a point-in-time copy, not a relation).
+model Template {
+  id          String   @id @default(cuid())
+  name        String
+  icon        String   @default("⭐")
+  description String   @default("")
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  blocks      Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+}
