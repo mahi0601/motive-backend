@@ -10,9 +10,19 @@ exports.list = async (userId, { workspaceId } = {}) => {
   return prisma.page.findMany({ where, orderBy: { position: 'asc' } });
 };
 
+// Read access is owner OR any workspace member — broadened for
+// presence/cursors (previously strictly owner-only, so a workspace member
+// could never even view a shared page, which made "collaborative editing"
+// meaningless beyond a single user). Writes (update/remove below, and block
+// mutations in block.service.js) stay owner-only for now; extending them to
+// workspace members is a real authorization design question (which roles
+// get write access?) that's out of scope here.
 exports.getById = async (id, userId) => {
-  const page = await prisma.page.findFirst({ where: { id, ownerId: userId } });
+  const page = await prisma.page.findUnique({ where: { id } });
   if (!page) throw AppError.notFound('Page not found');
+  if (page.ownerId !== userId && !(await workspaceService.canAccess(page.workspaceId, userId))) {
+    throw AppError.notFound('Page not found');
+  }
   return page;
 };
 
