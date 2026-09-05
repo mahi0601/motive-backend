@@ -1,49 +1,50 @@
-const Block = require('../models/block.model');
-const Page = require('../models/page.model');
+const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 
 // Verify the page belongs to the user before touching its blocks.
 async function assertPageOwner(pageId, userId) {
-  const page = await Page.findOne({ _id: pageId, ownerId: userId }).select('_id').lean();
+  const page = await prisma.page.findFirst({ where: { id: pageId, ownerId: userId }, select: { id: true } });
   if (!page) throw AppError.notFound('Page not found');
 }
 
 exports.listByPage = async (pageId, userId) => {
   await assertPageOwner(pageId, userId);
-  return Block.find({ pageId }).sort('position').lean();
+  return prisma.block.findMany({ where: { pageId }, orderBy: { position: 'asc' } });
 };
 
 exports.create = async (pageId, data, userId) => {
   await assertPageOwner(pageId, userId);
   let position = data.position;
   if (position === undefined || position === null) {
-    position = await Block.countDocuments({ pageId });
+    position = await prisma.block.count({ where: { pageId } });
   }
-  return Block.create({
-    pageId,
-    type: data.type || 'paragraph',
-    content: data.content || {},
-    position,
+  return prisma.block.create({
+    data: {
+      pageId,
+      type: data.type || 'paragraph',
+      content: data.content || {},
+      position,
+    },
   });
 };
 
 exports.update = async (id, data, userId) => {
-  const block = await Block.findById(id);
+  const block = await prisma.block.findUnique({ where: { id } });
   if (!block) throw AppError.notFound('Block not found');
   await assertPageOwner(block.pageId, userId);
 
-  if ('type' in data) block.type = data.type;
-  if ('content' in data) block.content = data.content;
-  if ('position' in data) block.position = data.position;
-  await block.save();
-  return block;
+  const patch = {};
+  if ('type' in data) patch.type = data.type;
+  if ('content' in data) patch.content = data.content;
+  if ('position' in data) patch.position = data.position;
+  return prisma.block.update({ where: { id }, data: patch });
 };
 
 exports.remove = async (id, userId) => {
-  const block = await Block.findById(id);
+  const block = await prisma.block.findUnique({ where: { id } });
   if (!block) throw AppError.notFound('Block not found');
   await assertPageOwner(block.pageId, userId);
-  await block.deleteOne();
+  await prisma.block.delete({ where: { id } });
   return { deleted: true };
 };
 
@@ -52,8 +53,8 @@ exports.reorder = async (pageId, order, userId) => {
   await assertPageOwner(pageId, userId);
   await Promise.all(
     (order || []).map(({ id, position }) =>
-      Block.updateOne({ _id: id, pageId }, { position })
+      prisma.block.updateMany({ where: { id, pageId }, data: { position } })
     )
   );
-  return Block.find({ pageId }).sort('position').lean();
+  return prisma.block.findMany({ where: { pageId }, orderBy: { position: 'asc' } });
 };

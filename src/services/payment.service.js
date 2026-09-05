@@ -1,6 +1,6 @@
 const Stripe = require('stripe');
 const config = require('../config/env');
-const User = require('../models/user.model');
+const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 
 // Lazily constructed — throws only when a payment route is actually hit without
@@ -29,7 +29,7 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
     mode: 'payment',
     automatic_payment_methods: { enabled: true },
     customer_email: user.email,
-    client_reference_id: user._id.toString(),
+    client_reference_id: user.id,
     line_items: [
       {
         price_data: {
@@ -42,7 +42,7 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
     ],
     success_url: `${config.frontendUrl}/settings?upgrade=success`,
     cancel_url: `${config.frontendUrl}/settings?upgrade=cancelled`,
-    metadata: { userId: user._id.toString() },
+    metadata: { userId: user.id },
   });
 
   return { url: session.url };
@@ -65,8 +65,9 @@ exports.handleWebhookEvent = async (event) => {
   const userId = session.metadata?.userId || session.client_reference_id;
   if (!userId) return;
 
-  await User.findByIdAndUpdate(userId, {
-    isPro: true,
-    stripeCustomerId: session.customer || undefined,
+  // updateMany (not update) so a stale/forged webhook userId no-ops instead of throwing.
+  await prisma.user.updateMany({
+    where: { id: userId },
+    data: { isPro: true, ...(session.customer ? { stripeCustomerId: session.customer } : {}) },
   });
 };

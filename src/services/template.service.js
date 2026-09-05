@@ -1,6 +1,4 @@
-const Template = require('../models/template.model');
-const Block = require('../models/block.model');
-const Page = require('../models/page.model');
+const prisma = require('../config/prisma');
 const builtins = require('../data/builtinTemplates');
 const pageService = require('./page.service');
 const AppError = require('../utils/AppError');
@@ -10,7 +8,10 @@ const previewOf = (blocks = []) => blocks.slice(0, 7).map((b) => b.type);
 
 // Built-ins (from code) + the user's saved custom templates.
 exports.list = async (userId) => {
-  const custom = await Template.find({ ownerId: userId }).sort('-createdAt').lean();
+  const custom = await prisma.template.findMany({
+    where: { ownerId: userId },
+    orderBy: { createdAt: 'desc' },
+  });
   return {
     builtIn: builtins.map(({ key, name, icon, description, category, accent, blocks }) => ({
       id: key,
@@ -24,7 +25,7 @@ exports.list = async (userId) => {
       builtIn: true,
     })),
     custom: custom.map((t) => ({
-      id: String(t._id),
+      id: t.id,
       name: t.name,
       icon: t.icon,
       description: t.description,
@@ -37,12 +38,12 @@ exports.list = async (userId) => {
   };
 };
 
-// Resolve a template (built-in by key, or custom by _id owned by the user).
+// Resolve a template (built-in by key, or custom by id owned by the user).
 const resolve = async (templateId, userId) => {
   const builtin = builtins.find((t) => t.key === templateId);
   if (builtin) return builtin;
 
-  const custom = await Template.findOne({ _id: templateId, ownerId: userId }).lean();
+  const custom = await prisma.template.findFirst({ where: { id: templateId, ownerId: userId } });
   if (!custom) throw AppError.notFound('Template not found');
   return custom;
 };
@@ -57,33 +58,35 @@ exports.use = async (templateId, userId, { parentId } = {}) => {
   );
 
   const blocks = (tpl.blocks || []).map((b, i) => ({
-    pageId: page._id,
+    pageId: page.id,
     type: b.type || 'paragraph',
     content: b.content || {},
     position: i,
   }));
-  if (blocks.length) await Block.insertMany(blocks);
+  if (blocks.length) await prisma.block.createMany({ data: blocks });
 
   return page;
 };
 
 // Save an existing page's blocks as a reusable custom template.
 exports.saveFromPage = async (userId, { pageId, name, icon, description }) => {
-  const page = await Page.findOne({ _id: pageId, ownerId: userId }).lean();
+  const page = await prisma.page.findFirst({ where: { id: pageId, ownerId: userId } });
   if (!page) throw AppError.notFound('Page not found');
 
-  const blocks = await Block.find({ pageId }).sort('position').lean();
-  return Template.create({
-    name: name || page.title || 'Untitled template',
-    icon: icon || page.icon || '⭐',
-    description: description || '',
-    ownerId: userId,
-    blocks: blocks.map((b) => ({ type: b.type, content: b.content })),
+  const blocks = await prisma.block.findMany({ where: { pageId }, orderBy: { position: 'asc' } });
+  return prisma.template.create({
+    data: {
+      name: name || page.title || 'Untitled template',
+      icon: icon || page.icon || '⭐',
+      description: description || '',
+      ownerId: userId,
+      blocks: blocks.map((b) => ({ type: b.type, content: b.content })),
+    },
   });
 };
 
 exports.remove = async (id, userId) => {
-  const deleted = await Template.findOneAndDelete({ _id: id, ownerId: userId });
-  if (!deleted) throw AppError.notFound('Template not found');
+  const { count } = await prisma.template.deleteMany({ where: { id, ownerId: userId } });
+  if (!count) throw AppError.notFound('Template not found');
   return { deleted: true };
 };
