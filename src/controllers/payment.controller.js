@@ -1,10 +1,10 @@
 const PaymentService = require('../services/payment.service');
-const User = require('../models/user.model');
+const prisma = require('../config/prisma');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
 
 exports.createCheckoutSession = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id);
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
   if (!user) throw AppError.notFound('User not found');
 
   const { url } = await PaymentService.createCheckoutSession(user, req.body.currency);

@@ -5,22 +5,17 @@ const config = require('../config/env');
 function normalize(err) {
   if (err instanceof AppError) return err;
 
-  // Mongoose: bad ObjectId
-  if (err.name === 'CastError') return AppError.badRequest(`Invalid ${err.path}`);
-
-  // Mongoose: schema validation
-  if (err.name === 'ValidationError') {
-    const msg = Object.values(err.errors)
-      .map((e) => e.message)
-      .join(', ');
-    return AppError.badRequest(msg);
-  }
-
-  // Mongo: duplicate key (e.g. email already registered)
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue || { field: '' })[0];
+  // Prisma: unique constraint violation (e.g. email already registered)
+  if (err.code === 'P2002') {
+    const field = (err.meta?.target || ['field'])[0];
     return AppError.conflict(`${field} already in use`);
   }
+
+  // Prisma: record required for the query was not found (update/delete by id)
+  if (err.code === 'P2025') return AppError.notFound('Not found');
+
+  // Prisma: malformed id / wrong type for a filter (roughly Mongoose's bad-ObjectId case)
+  if (err.code === 'P2023') return AppError.badRequest('Invalid id');
 
   // JWT
   if (err.name === 'JsonWebTokenError') return AppError.unauthorized('Invalid token');
