@@ -50,7 +50,12 @@ exports.update = async (id, data, userId) => {
   return prisma.page.findUnique({ where: { id } });
 };
 
-// Archive (soft-delete) a page and its descendants + blocks.
+// Archive (soft-delete) a page and its descendants. Blocks are deliberately
+// left intact — un-archiving (PATCH { archived: false }) is how the frontend
+// implements "Undo", and that would restore an empty page if we purged
+// content here. Archived pages are already excluded from list/search, so
+// leftover blocks are simply inert until the page is restored (or a future
+// "empty trash" feature actually purges them).
 exports.remove = async (id, userId) => {
   const page = await prisma.page.findFirst({ where: { id, ownerId: userId } });
   if (!page) throw AppError.notFound('Page not found');
@@ -58,7 +63,6 @@ exports.remove = async (id, userId) => {
   const ids = await collectDescendantIds(id, userId);
   ids.push(id);
   await prisma.page.updateMany({ where: { id: { in: ids }, ownerId: userId }, data: { archived: true } });
-  await prisma.block.deleteMany({ where: { pageId: { in: ids } } });
   return { archived: ids.length };
 };
 

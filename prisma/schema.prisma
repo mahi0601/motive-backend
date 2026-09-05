@@ -27,6 +27,8 @@ enum BlockType {
   divider
   image
   callout
+  table
+  embed
 }
 
 enum TaskPriority {
