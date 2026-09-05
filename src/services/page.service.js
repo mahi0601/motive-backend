@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const workspaceService = require('./workspace.service');
+const activityLog = require('./activityLog.service');
 
 // All non-archived pages the user owns (optionally in a workspace).
 exports.list = async (userId, { workspaceId } = {}) => {
@@ -24,7 +25,7 @@ exports.create = async (data, userId) => {
   const count = await prisma.page.count({
     where: { ownerId: userId, parentId: data.parentId || null },
   });
-  return prisma.page.create({
+  const page = await prisma.page.create({
     data: {
       title: data.title || 'Untitled',
       icon: data.icon,
@@ -34,7 +35,10 @@ exports.create = async (data, userId) => {
       position: count,
     },
   });
+  activityLog.log('created', userId, { description: `Created page "${page.title}"` });
+  return page;
 };
+
 
 exports.update = async (id, data, userId) => {
   const allowed = ['title', 'icon', 'cover', 'parentId', 'position', 'favorite', 'archived'];
