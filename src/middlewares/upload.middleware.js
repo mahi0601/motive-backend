@@ -1,11 +1,18 @@
 // src/middlewares/upload.middleware.js
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+
+// public/uploads/ is gitignored (uploaded content shouldn't be committed), so
+// it doesn't exist on a fresh clone/deploy — multer's diskStorage needs the
+// destination to already exist, it won't create it.
+const UPLOAD_DIR = 'public/uploads/';
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // File storage config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'public/uploads/');
+    cb(null, UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9);

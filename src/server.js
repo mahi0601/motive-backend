@@ -41,6 +41,21 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan(config.isProd ? 'combined' : 'dev'));
 
+// Serve uploaded attachments. The frontend and API are on different origins
+// (even in prod: motive-app-*.onrender.com vs motive-api-*.onrender.com), and
+// helmet()'s default Cross-Origin-Resource-Policy: same-origin would block an
+// <img>/download from a different origin from ever loading these — relaxed
+// just for this path, since uploaded files are meant to be fetchable by the
+// app that uploaded them.
+app.use(
+  '/uploads',
+  (req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
+  express.static('public/uploads')
+);
+
 // ── Rate limiting ───────────────────────────────────────
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false }));
 
