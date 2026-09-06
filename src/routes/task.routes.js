@@ -3,6 +3,7 @@ const TaskController = require('../controllers/task.controller');
 const auth = require('../middlewares/auth.middleware');
 
 router.use(auth);
+router.get('/search', TaskController.search);
 router.get('/', TaskController.getTasks);
 router.post('/', TaskController.createTask);
 router.patch('/:id', TaskController.updateTask);

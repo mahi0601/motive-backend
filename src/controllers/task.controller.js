@@ -8,6 +8,11 @@ exports.getTasks = asyncHandler(async (req, res) => {
   res.json({ success: true, ...paginated(items, total, { page, limit }) });
 });
 
+exports.search = asyncHandler(async (req, res) => {
+  const tasks = await TaskService.search(req.query.q, req.user.id);
+  res.json(tasks);
+});
+
 exports.createTask = asyncHandler(async (req, res) => {
   const task = await TaskService.create(req.body, req.user.id);
   res.status(201).json({ success: true, task });
