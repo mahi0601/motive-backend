@@ -128,10 +128,17 @@ model Block {
   // Freeform payload: { text, checked, language, url, caption, collapsed, color, ... }
   content   Json      @default("{}")
   position  Int       @default(0)
+  // One level of nesting under a 'toggle' block — null for top-level blocks.
+  // `position` is scoped within siblings sharing the same parentBlockId, so
+  // reordering children never touches top-level positions and vice versa.
+  parentBlockId String?
+  parent        Block?  @relation("BlockChildren", fields: [parentBlockId], references: [id], onDelete: Cascade)
+  children      Block[] @relation("BlockChildren")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   @@index([pageId])
+  @@index([parentBlockId])
 }
 
 model Task {

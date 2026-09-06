@@ -26,9 +26,13 @@ exports.listByPage = async (pageId, userId) => {
 
 exports.create = async (pageId, data, userId) => {
   await assertPageOwner(pageId, userId);
+  const parentBlockId = data.parentBlockId || null;
   let position = data.position;
   if (position === undefined || position === null) {
-    position = await prisma.block.count({ where: { pageId } });
+    // Scoped to siblings — a child's position sequence is independent of its
+    // parent toggle's top-level position, so reordering one never touches
+    // the other.
+    position = await prisma.block.count({ where: { pageId, parentBlockId } });
   }
   return prisma.block.create({
     data: {
@@ -36,6 +40,7 @@ exports.create = async (pageId, data, userId) => {
       type: data.type || 'paragraph',
       content: data.content || {},
       position,
+      parentBlockId,
     },
   });
 };
@@ -49,6 +54,10 @@ exports.update = async (id, data, userId) => {
   if ('type' in data) patch.type = data.type;
   if ('content' in data) patch.content = data.content;
   if ('position' in data) patch.position = data.position;
+  // Indent/outdent under a toggle — the frontend computes both the new
+  // parent and the resulting position (e.g. "last among the new siblings"),
+  // since it already has the full block list loaded.
+  if ('parentBlockId' in data) patch.parentBlockId = data.parentBlockId;
   return prisma.block.update({ where: { id }, data: patch });
 };
 
