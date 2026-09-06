@@ -1,5 +1,6 @@
 // src/controllers/comment.controller.js
 const prisma = require('../config/prisma');
+const { emitNotification } = require('../sockets/socket.handler');
 
 // Mentions are authored as @[Display Name](userId) — parsed back into a
 // styled chip client-side. Extracts the distinct mentioned user ids.
@@ -18,7 +19,7 @@ exports.addComment = async (req, res, next) => {
 
     // Notify the task owner someone commented (skip self-comments).
     if (task && task.userId !== req.user.id) {
-      await prisma.notification.create({
+      const notification = await prisma.notification.create({
         data: {
           userId: task.userId,
           title: 'New comment',
@@ -26,6 +27,7 @@ exports.addComment = async (req, res, next) => {
           type: 'comment',
         },
       });
+      emitNotification(task.userId, notification);
     }
 
     // Notify each @mentioned user (skip mentioning yourself, and skip a
@@ -34,14 +36,17 @@ exports.addComment = async (req, res, next) => {
       (id) => id !== req.user.id && id !== task?.userId
     );
     if (mentionedIds.length) {
-      await prisma.notification.createMany({
-        data: mentionedIds.map((userId) => ({
-          userId,
-          title: 'You were mentioned',
-          message: `${comment.user.name} mentioned you on "${task?.title ?? 'a task'}"`,
-          type: 'mention',
-        })),
-      });
+      const mentionData = mentionedIds.map((userId) => ({
+        userId,
+        title: 'You were mentioned',
+        message: `${comment.user.name} mentioned you on "${task?.title ?? 'a task'}"`,
+        type: 'mention',
+      }));
+      await prisma.notification.createMany({ data: mentionData });
+      // createMany doesn't return the created rows (no `id`/`createdAt`) —
+      // the socket push just needs enough to render a toast, not the
+      // persisted id, so the client-constructed shape is fine here.
+      mentionData.forEach(({ userId, ...notification }) => emitNotification(userId, notification));
     }
 
     res.status(201).json({ success: true, comment });
