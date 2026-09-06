@@ -41,6 +41,24 @@ const initSocket = (server) => {
       socket.to(`page:${pageId}`).emit('presence:join', { socketId: socket.id, user: socket.data.user });
     });
 
+    // ── Per-user notification room ─────────────────────
+    // Separate from page:join's room (which is per-page, for co-editing
+    // presence) — this lets the server push a notification straight to
+    // every tab/device a user has open, regardless of what page they're on.
+    // JWT-verified the same way page:join is, so a socket can't claim to be
+    // a different user's notification target.
+    socket.on('identify', ({ token } = {}) => {
+      try {
+        const payload = verifyToken(token);
+        if (payload.type === 'access') {
+          socket.data.userId = payload.id;
+          socket.join(`user:${payload.id}`);
+        }
+      } catch {
+        /* no valid token — socket just won't receive notification pushes */
+      }
+    });
+
     socket.on('page:leave', ({ pageId } = {}) => {
       if (!pageId) return;
       socket.leave(`page:${pageId}`);
@@ -66,4 +84,10 @@ const initSocket = (server) => {
   return ioInstance;
 };
 
-module.exports = { initSocket, getIO: () => ioInstance };
+// Push a notification to every socket a user currently has open. Safe to
+// call before initSocket runs (e.g. in tests) — just a no-op then.
+const emitNotification = (userId, notification) => {
+  if (ioInstance) ioInstance.to(`user:${userId}`).emit('notification:new', notification);
+};
+
+module.exports = { initSocket, getIO: () => ioInstance, emitNotification };
