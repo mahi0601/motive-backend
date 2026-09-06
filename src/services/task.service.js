@@ -11,6 +11,16 @@ exports.getAll = async (userId, { skip, limit }) => {
   return { items, total };
 };
 
+// Title search, for the command palette — mirrors page.service.js's search.
+exports.search = async (term, userId) => {
+  if (!term || !term.trim()) return [];
+  return prisma.task.findMany({
+    where: { userId, title: { contains: term.trim(), mode: 'insensitive' } },
+    orderBy: { position: 'asc' },
+    take: 20,
+  });
+};
+
 const WRITABLE_FIELDS = ['title', 'description', 'priority', 'status', 'category', 'dueDate'];
 
 exports.create = async (data, userId) => {
