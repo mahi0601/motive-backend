@@ -14,8 +14,8 @@ exports.getSubtasksByTaskId = asyncHandler(async (req, res) => {
 });
 
 exports.updateSubtask = asyncHandler(async (req, res) => {
-  const updated = await SubtaskService.update(req.params.id, req.body, req.user.id);
-  res.status(200).json({ success: true, updated });
+  const subtask = await SubtaskService.update(req.params.id, req.body, req.user.id);
+  res.status(200).json({ success: true, subtask });
 });
 
 exports.deleteSubtask = asyncHandler(async (req, res) => {
