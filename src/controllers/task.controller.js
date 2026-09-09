@@ -10,7 +10,7 @@ exports.getTasks = asyncHandler(async (req, res) => {
 
 exports.search = asyncHandler(async (req, res) => {
   const tasks = await TaskService.search(req.query.q, req.user.id);
-  res.json(tasks);
+  res.json({ success: true, tasks });
 });
 
 exports.createTask = asyncHandler(async (req, res) => {

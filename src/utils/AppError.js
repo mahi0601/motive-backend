@@ -26,6 +26,9 @@ class AppError extends Error {
   static conflict(msg = 'Conflict') {
     return new AppError(msg, 409);
   }
+  static paymentRequired(msg = 'Payment required') {
+    return new AppError(msg, 402);
+  }
 }
 
 module.exports = AppError;
