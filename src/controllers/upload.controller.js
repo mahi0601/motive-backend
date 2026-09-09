@@ -1,11 +1,10 @@
 // src/controllers/upload.controller.js
 const FileService = require('../services/file.service');
 const asyncHandler = require('../utils/asyncHandler');
+const AppError = require('../utils/AppError');
 
 exports.uploadFile = asyncHandler(async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
-  }
+  if (!req.file) throw AppError.badRequest('No file uploaded');
 
   const { taskId } = req.body;
   const { fileUrl, file } = await FileService.upload(

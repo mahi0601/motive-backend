@@ -20,6 +20,12 @@ exports.getCheckoutSession = asyncHandler(async (req, res) => {
 
 // Mounted with express.raw() ahead of the global JSON body parser (see server.js) —
 // Stripe's signature check needs the exact raw bytes, not the re-serialized JSON.
+//
+// The two responses below deliberately don't use this codebase's usual
+// { success, ... } envelope — this endpoint is called by Stripe, not our own
+// frontend, and both shapes follow Stripe's own documented webhook
+// conventions instead: a plain-text 400 body on a signature failure, and
+// `{ received: true }` (Stripe's own example payload) on success.
 exports.webhook = asyncHandler(async (req, res) => {
   const signature = req.headers['stripe-signature'];
 
