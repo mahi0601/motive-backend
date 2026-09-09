@@ -47,3 +47,37 @@ services:
         value: "999"
       - key: PRO_UPGRADE_PRICE_INR_PAISE
         value: "79900"
+      # Password reset email — get a key from https://resend.com/api-keys.
+      # Without it, reset emails just no-op with a console warning.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Error tracking — get a DSN from https://sentry.io. Without it,
+      # errors are only logged to stdout (Render's log retention is short).
+      - key: SENTRY_DSN
+        sync: false
+      # File storage (Cloudflare R2) — without these, uploads fall back to
+      # local disk, which Render wipes on every deploy/restart. See
+      # motive-backend/.env.example for how to create the bucket/token.
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      # Google OAuth login — get credentials from
+      # https://console.cloud.google.com/apis/credentials. Without them,
+      # email/password auth works fine, "Continue with Google" just 400s.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Must exactly match the Authorized redirect URI registered above,
+      # e.g. https://motive-api-u7xg.onrender.com/api/auth/google/callback
+      - key: GOOGLE_REDIRECT_URI
+        sync: false

@@ -11,6 +11,7 @@ const config = require('./config/env');
 const connectDB = require('./config/db');
 const prisma = require('./config/prisma');
 const routes = require('./routes/index');
+const { enabled: sentryEnabled, Sentry } = require('./config/sentry');
 const errorHandler = require('./middlewares/error.middleware');
 const { initSocket } = require('./sockets/socket.handler');
 const paymentController = require('./controllers/payment.controller');
@@ -25,10 +26,7 @@ if (config.isProd) app.set('trust proxy', 1);
 app.use(helmet());
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin || config.corsOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
+    origin: config.corsOriginCheck,
     credentials: true,
   })
 );
@@ -70,6 +68,9 @@ const credentialLimiter = rateLimit({
 });
 app.use('/api/auth/login', credentialLimiter);
 app.use('/api/auth/register', credentialLimiter);
+app.use('/api/auth/forgot-password', credentialLimiter);
+app.use('/api/auth/reset-password', credentialLimiter);
+app.use('/api/auth/native-exchange', credentialLimiter);
 
 // ── Health & readiness ──────────────────────────────────
 app.get('/api/health', async (_req, res) => {
@@ -89,6 +90,9 @@ app.get('/', (_req, res) => res.send('🚀 Motive API is up & running'));
 
 // ── Routes & error handler ──────────────────────────────
 app.use('/api', routes);
+// Must be registered after routes but before our own error handler, so
+// Sentry sees the error first while it's still unhandled.
+if (sentryEnabled) Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 // ── Boot ────────────────────────────────────────────────
@@ -121,9 +125,13 @@ const shutdown = (signal) => {
 ['SIGTERM', 'SIGINT'].forEach((sig) => process.on(sig, () => shutdown(sig)));
 
 // Last-resort safety nets — log and exit so the orchestrator can restart cleanly.
-process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+  if (sentryEnabled) Sentry.captureException(reason);
+});
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
+  if (sentryEnabled) Sentry.captureException(err);
   process.exit(1);
 });
 

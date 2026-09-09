@@ -26,7 +26,7 @@ const config = {
     accessExpiresIn: process.env.ACCESS_TOKEN_TTL || '15m',
     refreshExpiresIn: process.env.REFRESH_TOKEN_TTL || '30d',
   },
-  // Refresh-token cookie. Tune per hosting topology (see ARCHITECTURE_HARDENING.md):
+  // Refresh-token cookie. Tune per hosting topology:
   //   same registrable domain  → sameSite 'lax'
   //   cross-site (diff domains) → sameSite 'none' + secure true (HTTPS required)
   cookie: {
@@ -61,12 +61,71 @@ const config = {
       inr: { amount: parseInt(process.env.PRO_UPGRADE_PRICE_INR_PAISE, 10) || 79900, label: '₹799' },
     },
   },
+  resend: {
+    apiKey: process.env.RESEND_API_KEY || '',
+    fromEmail: process.env.EMAIL_FROM || 'Motive <onboarding@resend.dev>',
+  },
+  // Cloudflare R2 (S3-compatible). Optional — see storage.service.js: when
+  // unset, uploads fall back to local disk (fine for dev, NOT for
+  // production on Render, whose disk is ephemeral and wiped every deploy).
+  r2: {
+    accountId: process.env.R2_ACCOUNT_ID || '',
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    bucket: process.env.R2_BUCKET_NAME || '',
+    // The bucket's public base URL — either R2's own r2.dev subdomain or a
+    // custom domain you've mapped to the bucket.
+    publicUrl: process.env.R2_PUBLIC_URL || '',
+  },
+  // Google OAuth login. Optional — without it, /api/auth/google just 400s;
+  // email/password auth is unaffected. Create credentials at
+  // https://console.cloud.google.com/apis/credentials — "Web application"
+  // type, with an Authorized redirect URI matching GOOGLE_REDIRECT_URI below
+  // exactly (e.g. https://your-api.example.com/api/auth/google/callback).
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || '',
+  },
+};
+
+// Shared by both the HTTP CORS middleware (server.js) and Socket.io's CORS
+// option (sockets/socket.handler.js) — previously each hand-rolled an
+// identical copy of this check against `corsOrigins`.
+config.corsOriginCheck = (origin, cb) => {
+  if (!origin || config.corsOrigins.includes(origin)) return cb(null, true);
+  return cb(new Error(`CORS blocked for origin: ${origin}`));
 };
 
 // Payments are opt-in: only enforced when a payment route is actually hit
 // (see payment.service.js), so the rest of the app still boots without Stripe configured.
 if (config.isProd && (!config.stripe.secretKey || !config.stripe.webhookSecret)) {
   console.warn('⚠️  STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET not set — payment endpoints will fail.');
+}
+
+// Same opt-in pattern — password-reset emails just silently no-op without it
+// (see email.service.js), rather than crashing the app at boot.
+if (config.isProd && !config.resend.apiKey) {
+  console.warn('⚠️  RESEND_API_KEY not set — password reset emails will not be sent.');
+}
+
+// Uploads fall back to local disk without this — fine for dev, but Render's
+// disk is ephemeral, so uploaded files vanish on every deploy/restart in
+// production without R2 configured (see storage.service.js).
+if (config.isProd && !config.r2.bucket) {
+  console.warn('⚠️  R2 storage not configured — uploads will use ephemeral local disk in production.');
+}
+
+// Sentry (see instrument.js / config/sentry.js) is opt-in the same way —
+// the app runs fine without SENTRY_DSN, it just won't report errors anywhere.
+if (config.isProd && !process.env.SENTRY_DSN) {
+  console.warn('⚠️  SENTRY_DSN not set — errors will only be logged to stdout in production.');
+}
+
+// Google login is opt-in too — /api/auth/google 400s without it, everything
+// else (including email/password auth) works the same either way.
+if (config.isProd && !config.google.clientId) {
+  console.warn('⚠️  GOOGLE_CLIENT_ID not set — "Continue with Google" will be unavailable.');
 }
 
 module.exports = config;
