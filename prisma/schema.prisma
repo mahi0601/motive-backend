@@ -43,12 +43,23 @@ enum TaskStatus {
   done
 }
 
+enum RecurrenceFrequency {
+  daily
+  weekly
+  monthly
+}
+
 model User {
   id               String   @id @default(cuid())
   name             String
   email            String   @unique
   // Never selected by default — see `omit` config in src/config/prisma.js.
-  password         String
+  // Nullable: a Google-only account (see auth.service.js#loginWithGoogle)
+  // has no password to compare against.
+  password         String?
+  // Set the first time a user signs in with Google — also used to link an
+  // existing password-based account by matching email on first Google login.
+  googleId         String?  @unique
   avatar           String   @default("")
   // Bumped on logout / password change to invalidate all outstanding refresh tokens.
   tokenVersion     Int      @default(0)
@@ -149,6 +160,16 @@ model Task {
   status      TaskStatus   @default(todo)
   category    String       @default("Personal")
   dueDate     DateTime?
+  // Set/cleared whenever `status` transitions to/from 'done' (task.service.js)
+  // — the source of truth for "completed" stats, since `updatedAt` also
+  // changes on unrelated edits.
+  completedAt DateTime?
+  tags        String[]     @default([])
+  // Null = one-off task. When set, completing this task creates the next
+  // occurrence (see task.service.js#update) rather than a scheduled job
+  // generating instances ahead of time — simpler, and naturally idempotent
+  // (one next-occurrence per completion, no risk of double-generating).
+  recurrence  RecurrenceFrequency?
   position    Int?
   userId      String
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -159,9 +180,11 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  // Hot path: "all of a user's tasks, ordered" / date-range lookups.
+  // Hot path: "all of a user's tasks, ordered" / date-range lookups / board+stats filters.
   @@index([userId, position])
   @@index([userId, dueDate])
+  @@index([userId, status])
+  @@index([userId, category])
 }
 
 model Subtask {
@@ -217,6 +240,7 @@ model Notification {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([userId, read])
 }
 
 model ActivityLog {
@@ -231,6 +255,35 @@ model ActivityLog {
 
   @@index([userId])
   @@index([taskId])
+}
+
+// Single-use, short-lived hand-off code for the native (Capacitor Android)
+// Google Sign-In flow — see auth.service.js#createNativeExchangeCode. The
+// system browser (where Google's consent screen runs) and the app's WebView
+// are separate cookie jars, so the normal httpOnly-refresh-cookie bootstrap
+// can't cross that boundary; this opaque code is handed back via a deep
+// link instead, then exchanged for real tokens by a request the WebView
+// itself makes (so the cookie lands in the right place). Deliberately not a
+// JWT: a random, server-tracked, delete-on-use code can't be replayed even
+// within its own expiry window once the legitimate exchange happens.
+model NativeExchangeCode {
+  code      String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// Idempotency ledger for Stripe webhooks — Stripe redelivers events on any
+// non-2xx/timeout and can occasionally send the same event twice even on a
+// clean 200. Recording `stripeEventId` first (unique) and no-op'ing on a
+// conflict means a replay can never re-apply the handler's side effects,
+// however many the handler grows to (today: one boolean; tomorrow: a
+// receipt email, an ActivityLog entry, a credit grant...).
+model WebhookEvent {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique
+  type          String
+  createdAt     DateTime @default(now())
 }
 
 // A user-saved custom template: a named snapshot of a page's blocks.
