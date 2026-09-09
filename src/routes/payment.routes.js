@@ -17,4 +17,7 @@ router.post(
   PaymentController.createCheckoutSession
 );
 
+// Reconciliation fallback — see payment.service.js#reconcileSession.
+router.get('/session/:sessionId', auth, PaymentController.getCheckoutSession);
+
 module.exports = router;
