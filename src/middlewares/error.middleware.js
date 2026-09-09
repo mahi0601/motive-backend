@@ -21,6 +21,9 @@ function normalize(err) {
   if (err.name === 'JsonWebTokenError') return AppError.unauthorized('Invalid token');
   if (err.name === 'TokenExpiredError') return AppError.unauthorized('Token expired');
 
+  // Multer: upload exceeded the configured size limit.
+  if (err.code === 'LIMIT_FILE_SIZE') return AppError.badRequest('File is too large');
+
   return err;
 }
 

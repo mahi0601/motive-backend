@@ -32,19 +32,27 @@ exports.create = async (data, userId) => {
     const ws = await workspaceService.getDefault(userId);
     workspaceId = ws.id;
   }
-  const count = await prisma.page.count({
-    where: { ownerId: userId, parentId: data.parentId || null },
-  });
-  const page = await prisma.page.create({
-    data: {
-      title: data.title || 'Untitled',
-      icon: data.icon,
-      parentId: data.parentId || null,
-      workspaceId,
-      ownerId: userId,
-      position: count,
+  // count+create wrapped in a Serializable transaction so two concurrent
+  // creates under the same parent can't both read the same count and
+  // collide on `position`.
+  const page = await prisma.$transaction(
+    async (tx) => {
+      const count = await tx.page.count({
+        where: { ownerId: userId, parentId: data.parentId || null },
+      });
+      return tx.page.create({
+        data: {
+          title: data.title || 'Untitled',
+          icon: data.icon,
+          parentId: data.parentId || null,
+          workspaceId,
+          ownerId: userId,
+          position: count,
+        },
+      });
     },
-  });
+    { isolationLevel: 'Serializable' }
+  );
   activityLog.log('created', userId, { description: `Created page "${page.title}"` });
   return page;
 };
@@ -76,16 +84,20 @@ exports.remove = async (id, userId) => {
   return { archived: ids.length };
 };
 
+// Single recursive query instead of one round-trip per tree level/node —
+// a deep or wide page tree used to fan out into N+1 queries here.
 async function collectDescendantIds(parentId, userId) {
-  const children = await prisma.page.findMany({
-    where: { parentId, ownerId: userId },
-    select: { id: true },
-  });
-  let ids = children.map((c) => c.id);
-  for (const child of children) {
-    ids = ids.concat(await collectDescendantIds(child.id, userId));
-  }
-  return ids;
+  const rows = await prisma.$queryRaw`
+    WITH RECURSIVE descendants AS (
+      SELECT id FROM "Page" WHERE "parentId" = ${parentId} AND "ownerId" = ${userId}
+      UNION ALL
+      SELECT p.id FROM "Page" p
+      INNER JOIN descendants d ON p."parentId" = d.id
+      WHERE p."ownerId" = ${userId}
+    )
+    SELECT id FROM descendants;
+  `;
+  return rows.map((r) => r.id);
 }
 
 // Search across page titles and block text. Substring match (case-insensitive)
@@ -99,8 +111,15 @@ exports.search = async (term, userId) => {
     take: 20,
   });
 
+  // Scoped to the caller's own pages in the query itself — previously this
+  // scanned every tenant's blocks for a match before filtering by owner
+  // afterward, which was both a full cross-tenant table scan and let other
+  // users' matches crowd out the caller's own within the `take: 20` cap.
   const blockHits = await prisma.block.findMany({
-    where: { content: { path: ['text'], string_contains: term } },
+    where: {
+      content: { path: ['text'], string_contains: term },
+      page: { ownerId: userId, archived: false },
+    },
     take: 20,
     select: { pageId: true },
   });
