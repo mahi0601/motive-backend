@@ -1,4 +1,5 @@
 const { verifyToken } = require('../utils/jwt.util');
+const config = require('../config/env');
 
 let ioInstance;
 
@@ -6,7 +7,10 @@ const initSocket = (server) => {
   const { Server } = require('socket.io');
   ioInstance = new Server(server, {
     cors: {
-      origin: '*',
+      // Shares the exact same allowlist check as the HTTP CORS middleware
+      // (config.corsOriginCheck, in config/env.js) — previously each
+      // hand-rolled its own copy of this closure.
+      origin: config.corsOriginCheck,
       methods: ['GET', 'POST']
     }
   });

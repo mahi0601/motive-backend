@@ -1,6 +1,10 @@
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 
+// Free tier: owner + 1 invited teammate (2 members total). Motive Pro
+// removes the cap — the first thing `isPro` actually gates.
+const FREE_MEMBER_LIMIT = 2;
+
 // Returns the user's workspaces; creates a default one on first access.
 exports.listForUser = async (userId) => {
   let workspaces = await prisma.workspace.findMany({
@@ -52,6 +56,16 @@ exports.canAccess = async (workspaceId, userId) => {
 exports.inviteMember = async (workspaceId, requesterId, email) => {
   const ws = await prisma.workspace.findFirst({ where: { id: workspaceId, ownerId: requesterId } });
   if (!ws) throw AppError.forbidden('Only the workspace owner can invite members');
+
+  const requester = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
+  if (!requester.isPro) {
+    const memberCount = await prisma.workspaceMember.count({ where: { workspaceId } });
+    if (memberCount >= FREE_MEMBER_LIMIT) {
+      throw AppError.paymentRequired(
+        `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Motive Pro to invite more.`
+      );
+    }
+  }
 
   const invitee = await prisma.user.findUnique({ where: { email } });
   if (!invitee) throw AppError.notFound('No user found with that email');
