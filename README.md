@@ -15,7 +15,7 @@ npm run dev                  # nodemon, http://localhost:8080
 
 Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot without them (`src/config/env.js`), and `JWT_SECRET` must be ≥32 chars in production. Everything else in `.env.example` is optional: missing it just disables that one feature (Google login, Stripe, R2, Sentry, Resend) rather than breaking anything else. Read the comments in `.env.example` — they document exactly what each one gates and where to get it.
 
-No test suite exists yet. `npm run dev` + manual/curl verification is the current workflow.
+`npm test` runs the Jest suite (`npm run dev` + manual/curl verification covers everything else not yet under test): the workspace-scoped authorization permission matrix (`tests/permissions.test.js` — the highest-risk surface in the codebase, since a gap there is a cross-tenant data leak rather than a wrong number somewhere), plus regression coverage for auth (JWT rotation/revocation), Stripe payment/webhook idempotency, recurring-task spawning, and Momentum's timezone/date-bucketing math. Shared fixtures live in `tests/helpers/fixtures.js`. Locally this runs against the real dev database (no separate test DB configured for local use); every fixture is created fresh with a unique email and torn down in `afterAll`, and `--runInBand` (see `jest.config.js`) keeps test files from racing each other over the same connection pool. CI (`.github/workflows/ci.yml`) instead spins up a throwaway `postgres:16` service container, runs `prisma migrate deploy` against it, then the same `npm test` — fully self-contained, no Neon/account access needed for CI.
 
 ## Deploying (Render)
 

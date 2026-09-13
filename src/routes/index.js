@@ -8,7 +8,8 @@ const fileRoutes = require('./file.routes');
 const subtaskRoutes = require('./subtask.routes');
 const commentRoutes = require('./comment.routes');
 const taskRoutes = require('./task.routes');
-const statsRoutes = require('./statistics.routes');
+const statsRoutes = require('./statistics.routes'); // deprecated alias — kept one release for stale PWA clients, see momentumRoutes
+const momentumRoutes = require('./momentum.routes');
 const notificationRoutes = require('./notification.routes');
 const activityRoutes = require('./activity.routes');
 const digestRoutes = require('./digest.routes');
@@ -26,7 +27,8 @@ router.use('/files', fileRoutes);
 router.use('/subtasks', subtaskRoutes);
 router.use('/comments', commentRoutes);
 router.use('/tasks', taskRoutes);
-router.use('/stats', statsRoutes);
+router.use('/stats', statsRoutes); // deprecated — superseded by /momentum
+router.use('/momentum', momentumRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/activity', activityRoutes);
 router.use('/digest', digestRoutes);

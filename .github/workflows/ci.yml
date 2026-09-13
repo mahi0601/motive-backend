@@ -9,6 +9,32 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A throwaway Postgres for the lifetime of this job only — not the dev
+    # database, no Neon/account access needed. Gives `prisma migrate deploy`
+    # and `npm test` a real database to run against instead of just parsing
+    # the schema (see PLAN's "Execution plan" — this replaces an earlier,
+    # since-corrected idea of using a Neon branch here, which would have
+    # needed dashboard access neither the assistant nor CI has).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      # A dummy value satisfying config/env.js's boot-time length check —
+      # never a real credential, this container and everything in it stop
+      # existing the moment the job ends.
+      JWT_SECRET: ci-only-dummy-secret-0000000000000000000000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,9 +42,10 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Validates prisma/schema.prisma is well-formed — doesn't need a real
-      # DATABASE_URL, just enough of one to satisfy the datasource block.
       - run: npx prisma validate
-        env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       - run: npx prisma generate
+      # Applies every committed migration to the fresh container above —
+      # this is what actually proves the migrations themselves are correct,
+      # not just that schema.prisma parses.
+      - run: npx prisma migrate deploy
+      - run: npm test

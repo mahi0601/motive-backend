@@ -61,6 +61,10 @@ model User {
   // existing password-based account by matching email on first Google login.
   googleId         String?  @unique
   avatar           String   @default("")
+  // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
+  // endpoint's week/month/quarter ranges in the user's own day, instead of
+  // the database server's timezone — see statistics.service.js.
+  timezone         String   @default("UTC")
   // Bumped on logout / password change to invalidate all outstanding refresh tokens.
   tokenVersion     Int      @default(0)
   // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed.
@@ -70,6 +74,7 @@ model User {
   updatedAt        DateTime @updatedAt
 
   tasks           Task[]
+  assignedTasks   Task[]   @relation("TaskAssignee")
   pages           Page[]
   workspacesOwned Workspace[]
   memberships     WorkspaceMember[]
@@ -88,6 +93,7 @@ model Workspace {
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members   WorkspaceMember[]
   pages     Page[]
+  tasks     Task[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -173,6 +179,18 @@ model Task {
   position    Int?
   userId      String
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Nullable so a personal (solo) task is unaffected — backfilled to the
+  // owner's default workspace for every existing task (see
+  // scripts/backfill-task-workspace.js), so it's always set going forward.
+  // Cascade on delete mirrors Page.workspaceId's existing behavior.
+  workspaceId String?
+  workspace   Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  // Who the task is for, distinct from `userId` (who created it) — the two
+  // are the same person for every solo task today. SetNull, not Cascade: the
+  // assignee leaving a workspace (or their account being deleted) should
+  // unassign the task, not delete work owned by someone else.
+  assigneeId  String?
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   subtasks    Subtask[]
   comments    Comment[]
   files       File[]
@@ -185,6 +203,10 @@ model Task {
   @@index([userId, dueDate])
   @@index([userId, status])
   @@index([userId, category])
+  // Workspace-scoped equivalents of the above, for a shared client/team
+  // workspace's board and Momentum's future per-workspace queries.
+  @@index([workspaceId, status])
+  @@index([assigneeId, status])
 }
 
 model Subtask {

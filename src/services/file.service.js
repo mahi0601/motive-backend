@@ -4,9 +4,10 @@ const storageService = require('./storage.service');
 const taskService = require('./task.service');
 
 // `taskId` is optional — a bare upload (no task association) still just
-// returns the URL/file row.
+// returns the URL/file row. Attaching a file to a task is a content
+// mutation, same as adding a subtask — requires 'write'.
 exports.upload = async (file, { protocol, host }, taskId, userId) => {
-  if (taskId) await taskService.assertOwner(taskId, userId);
+  if (taskId) await taskService.assertAccess(taskId, userId, 'write');
 
   const { url: fileUrl } = await storageService.saveFile(file, { protocol, host });
   const fileRow = await prisma.file.create({
@@ -16,10 +17,16 @@ exports.upload = async (file, { protocol, host }, taskId, userId) => {
 };
 
 exports.listByTask = async (taskId, userId) => {
-  await taskService.assertOwner(taskId, userId);
+  await taskService.assertAccess(taskId, userId, 'read');
   return prisma.file.findMany({ where: { taskId }, orderBy: { createdAt: 'desc' } });
 };
 
+// Deliberately still uploader-only, unlike everything else touched in this
+// pass — this is "can you delete a specific file," a different question
+// from "do you have write access to the task it's attached to." Left
+// exactly as it was; broadening it to any workspace editor is a real
+// product decision (should an editor be able to delete a teammate's
+// upload?) that shouldn't be bundled into a consistency fix.
 exports.remove = async (id, userId) => {
   const file = await prisma.file.findFirst({ where: { id, uploadedBy: userId } });
   if (!file) throw AppError.notFound('File not found');

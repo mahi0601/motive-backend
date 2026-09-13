@@ -2,30 +2,28 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const workspaceService = require('./workspace.service');
 
-// Verify the page belongs to the user before touching its blocks. Mutations
-// stay owner-only (see page.service.js's getById for why reads are broader).
-async function assertPageOwner(pageId, userId) {
-  const page = await prisma.page.findFirst({ where: { id: pageId, ownerId: userId }, select: { id: true } });
-  if (!page) throw AppError.notFound('Page not found');
-}
-
-// Owner OR any workspace member — lets a shared viewer actually see a
-// page's content, not just its title.
-async function assertPageReadAccess(pageId, userId) {
+// Role-aware access check on the block's *page* — a block has no owner or
+// workspace of its own, it inherits both from `Page` (see PLAN "Total
+// scope" §A: "every Block mutation" routes through the same owner-or-role
+// check as Page writes now do). 404s rather than 403s, matching
+// page.service.js#assertAccess — a non-member shouldn't learn the page
+// exists at all.
+async function assertPageAccess(pageId, userId, need = 'read') {
   const page = await prisma.page.findUnique({ where: { id: pageId }, select: { ownerId: true, workspaceId: true } });
   if (!page) throw AppError.notFound('Page not found');
-  if (page.ownerId !== userId && !(await workspaceService.canAccess(page.workspaceId, userId))) {
+  const isOwner = page.ownerId === userId;
+  if (!isOwner && !(await workspaceService.canAccess(page.workspaceId, userId, need))) {
     throw AppError.notFound('Page not found');
   }
 }
 
 exports.listByPage = async (pageId, userId) => {
-  await assertPageReadAccess(pageId, userId);
+  await assertPageAccess(pageId, userId, 'read');
   return prisma.block.findMany({ where: { pageId }, orderBy: { position: 'asc' } });
 };
 
 exports.create = async (pageId, data, userId) => {
-  await assertPageOwner(pageId, userId);
+  await assertPageAccess(pageId, userId, 'write');
   const parentBlockId = data.parentBlockId || null;
 
   if (data.position !== undefined && data.position !== null) {
@@ -52,7 +50,7 @@ exports.create = async (pageId, data, userId) => {
 exports.update = async (id, data, userId) => {
   const block = await prisma.block.findUnique({ where: { id } });
   if (!block) throw AppError.notFound('Block not found');
-  await assertPageOwner(block.pageId, userId);
+  await assertPageAccess(block.pageId, userId, 'write');
 
   const patch = {};
   if ('type' in data) patch.type = data.type;
@@ -68,7 +66,7 @@ exports.update = async (id, data, userId) => {
 exports.remove = async (id, userId) => {
   const block = await prisma.block.findUnique({ where: { id } });
   if (!block) throw AppError.notFound('Block not found');
-  await assertPageOwner(block.pageId, userId);
+  await assertPageAccess(block.pageId, userId, 'write');
   await prisma.block.delete({ where: { id } });
   return { deleted: true };
 };
@@ -78,7 +76,7 @@ exports.remove = async (id, userId) => {
 // previously a `Promise.all` of independent updates could partially fail
 // (or race with a concurrent reorder) and leave positions inconsistent.
 exports.reorder = async (pageId, order, userId) => {
-  await assertPageOwner(pageId, userId);
+  await assertPageAccess(pageId, userId, 'write');
   if (order && order.length) {
     await prisma.$transaction(
       order.map(({ id, position }) =>
