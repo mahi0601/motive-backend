@@ -4,7 +4,7 @@ const { getPagination, paginated } = require('../utils/pagination');
 
 exports.getTasks = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
-  const { items, total } = await TaskService.getAll(req.user.id, { skip, limit });
+  const { items, total } = await TaskService.getAll(req.user.id, { skip, limit, workspaceId: req.query.workspaceId });
   res.json({ success: true, ...paginated(items, total, { page, limit }) });
 });
 
