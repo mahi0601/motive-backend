@@ -7,7 +7,7 @@ exports.getProfile = (userId) => prisma.user.findUnique({ where: { id: userId } 
 exports.updateProfile = async (userId, data) => {
   // Whitelist updatable fields — never let a client patch password/email/tokenVersion here.
   const patch = {};
-  ['name', 'avatar'].forEach((k) => {
+  ['name', 'avatar', 'timezone'].forEach((k) => {
     if (k in data) patch[k] = data[k];
   });
   try {

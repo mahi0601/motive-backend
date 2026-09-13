@@ -27,11 +27,10 @@ const extractMentionedUserIds = (text) => [...new Set([...text.matchAll(MENTION_
 // split: this service owns persistence, the controller owns the realtime
 // side effect) rather than this service reaching into socket.handler.js.
 exports.addComment = async (taskId, userId, text) => {
-  // Tasks have no workspace/collaborator model to comment on someone else's
-  // task, so this also means only the task owner can ever comment — no
-  // "notify the task owner" case is possible here, mentions are the only
-  // way a comment notifies anyone other than yourself.
-  const task = await taskService.assertOwner(taskId, userId);
+  // Any workspace member (owner/editor/viewer) can comment on a shared
+  // task — a viewer leaving feedback (e.g. a client) is a normal case, not
+  // an edge case, so this deliberately only requires 'read', not 'write'.
+  const task = await taskService.assertAccess(taskId, userId, 'read');
 
   const comment = await prisma.comment.create({
     data: { taskId, userId, text },
@@ -62,7 +61,7 @@ exports.addComment = async (taskId, userId, text) => {
 };
 
 exports.getComments = async (taskId, userId) => {
-  await taskService.assertOwner(taskId, userId);
+  await taskService.assertAccess(taskId, userId, 'read');
   return prisma.comment.findMany({
     where: { taskId },
     include: { user: { select: { name: true, email: true } } },
