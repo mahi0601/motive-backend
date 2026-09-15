@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const logger = require('../config/logger');
 
 // Fire-and-forget-ish activity log write. Never blocks or fails the caller's
 // real operation — an activity feed entry going missing is much better than
@@ -7,7 +8,7 @@ exports.log = async (action, userId, { taskId = null, description = '' } = {}) =
   try {
     await prisma.activityLog.create({ data: { action, userId, taskId, description } });
   } catch (err) {
-    console.error('Activity log write failed:', err.message);
+    logger.error('Activity log write failed', err, { action, userId, taskId });
   }
 };
 

@@ -6,6 +6,21 @@ const { verifyToken, signResetToken } = require('../utils/jwt.util');
 const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
 const emailService = require('./email.service');
+const logger = require('../config/logger');
+
+// A plain expired token is routine — every returning user's access token
+// naturally expires and gets refreshed, so logging that at `warn` would be
+// noisy, low-signal noise on nearly every page load. A token that's invalid
+// for any *other* reason (bad signature, malformed, wrong secret) is a
+// different, more interesting signal — possible tampering or a client bug —
+// so that's what actually gets a `warn`; routine expiry stays `debug`.
+function logTokenFailure(event, err, context) {
+  if (err.name === 'TokenExpiredError') {
+    logger.debug(`${event} (expired)`, context);
+  } else {
+    logger.warn(`${event} (invalid)`, { ...context, reason: err.message });
+  }
+}
 
 // Password is globally omitted by the Prisma client (see config/prisma.js),
 // so any `user` object here is already safe to send to the client as-is.
@@ -123,7 +138,8 @@ exports.refresh = async (refreshToken) => {
   let payload;
   try {
     payload = verifyToken(refreshToken);
-  } catch {
+  } catch (err) {
+    logTokenFailure('Refresh token rejected', err);
     throw AppError.unauthorized('Invalid refresh token');
   }
   if (payload.type !== 'refresh') throw AppError.unauthorized('Invalid token type');
@@ -151,8 +167,10 @@ exports.logout = async (refreshToken) => {
   try {
     const { id } = verifyToken(refreshToken);
     await exports.revokeAll(id);
-  } catch {
-    /* expired/invalid cookie — nothing to revoke */
+  } catch (err) {
+    // Nothing to revoke either way — logout still succeeds. Logged only for
+    // the audit trail this had zero trace of before.
+    logTokenFailure('Logout with an unusable refresh cookie', err);
   }
 };
 
@@ -178,7 +196,8 @@ exports.resetPassword = async (token, newPassword) => {
   let payload;
   try {
     payload = verifyToken(token);
-  } catch {
+  } catch (err) {
+    logTokenFailure('Password reset token rejected', err);
     throw AppError.badRequest('This reset link is invalid or has expired.');
   }
   if (payload.type !== 'reset') throw AppError.badRequest('This reset link is invalid or has expired.');
