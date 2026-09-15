@@ -15,13 +15,15 @@ npm run dev                  # nodemon, http://localhost:8080
 
 Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot without them (`src/config/env.js`), and `JWT_SECRET` must be ≥32 chars in production. Everything else in `.env.example` is optional: missing it just disables that one feature (Google login, Stripe, R2, Sentry, Resend) rather than breaking anything else. Read the comments in `.env.example` — they document exactly what each one gates and where to get it.
 
+`npm run lint` runs ESLint (flat config, `eslint.config.js`) — mainly enforcing `no-console`: everything logs through `src/config/logger.js` instead (see "Logging" below), so a stray `console.log` fails CI rather than silently shipping.
+
 `npm test` runs the Jest suite (`npm run dev` + manual/curl verification covers everything else not yet under test): the workspace-scoped authorization permission matrix (`tests/permissions.test.js` — the highest-risk surface in the codebase, since a gap there is a cross-tenant data leak rather than a wrong number somewhere), plus regression coverage for auth (JWT rotation/revocation), Stripe payment/webhook idempotency, recurring-task spawning, and Momentum's timezone/date-bucketing math. Shared fixtures live in `tests/helpers/fixtures.js`. Locally this runs against the real dev database (no separate test DB configured for local use); every fixture is created fresh with a unique email and torn down in `afterAll`, and `--runInBand` (see `jest.config.js`) keeps test files from racing each other over the same connection pool. CI (`.github/workflows/ci.yml`) instead spins up a throwaway `postgres:16` service container, runs `prisma migrate deploy` against it, then the same `npm test` — fully self-contained, no Neon/account access needed for CI.
 
 ## Deploying (Render)
 
 `render.yaml` is a Render Blueprint: `npm ci && npx prisma migrate deploy` on build, `node src/index.js` to start, health check at `/api/health`, `autoDeploy: true` (pushes to `master` deploy automatically — migrations included).
 
-**16 env vars are `sync: false` in the blueprint**, meaning Render won't set them for you — paste each into the service's dashboard once:
+**17 env vars are `sync: false` in the blueprint**, meaning Render won't set them for you — paste each into the service's dashboard once:
 
 | Var | Where to get it |
 |---|---|
@@ -30,6 +32,7 @@ Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot 
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard — see the Stripe section below first |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend dashboard — `EMAIL_FROM` needs a domain you've verified there |
 | `SENTRY_DSN` | A Sentry project (Node platform) |
+| `LOGTAIL_SOURCE_TOKEN` | Optional — a Better Stack (Logtail) source, see "Logging" below |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` | Cloudflare R2 — see below |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Google Cloud Console — see below |
 
@@ -53,6 +56,10 @@ Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot 
 ### Cloudflare R2 (uploads)
 
 Effectively required in production — Render's disk is ephemeral, so without R2 configured, uploaded attachments vanish on every deploy/restart. Create a bucket, an S3-compatible access key pair scoped to it, enable public read access (the `r2.dev` subdomain or a custom domain) for `R2_PUBLIC_URL`. **All five** `R2_*` vars must be set — any single one missing silently falls back to local disk with no error.
+
+### Logging
+
+`src/config/logger.js` (pino) is the one place a log line becomes both a structured stdout entry *and*, for a genuinely unexpected error (not an operational `AppError` — see `utils/AppError.js`), a Sentry report — call `logger.error(msg, err, context)`/`.warn(msg, context)`/`.info(msg, context)` instead of `console.*` anywhere in `src/` (enforced by `npm run lint`'s `no-console` rule). Pretty-printed locally, plain JSON in production. Optionally also ships to Better Stack (Logtail) if `LOGTAIL_SOURCE_TOKEN` is set — free tier, 1GB/month, 3-day retention, `betterstack.com/logs` → create a JavaScript/pino source. Without it, logs are still fully structured on stdout, just not shipped anywhere with longer retention than Render's own dashboard.
 
 ### Sentry / Resend
 

@@ -2,6 +2,7 @@ const PaymentService = require('../services/payment.service');
 const UserService = require('../services/user.service');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
+const logger = require('../config/logger');
 
 exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const user = await UserService.getProfile(req.user.id);
@@ -33,7 +34,11 @@ exports.webhook = asyncHandler(async (req, res) => {
   try {
     event = PaymentService.verifyWebhookEvent(req.body, signature);
   } catch (err) {
-    console.error('⚠️  Stripe webhook signature verification failed:', err.message);
+    // Was console-only — invisible to Sentry. A signature failure in
+    // production usually means a misconfigured STRIPE_WEBHOOK_SECRET after
+    // a redeploy (a real operational problem worth alerting on), not just
+    // noise, so this is reported rather than treated as routine.
+    logger.error('Stripe webhook signature verification failed', err);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 

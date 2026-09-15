@@ -4,6 +4,7 @@ const tokenService = require('../services/token.service');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
 const config = require('../config/env');
+const logger = require('../config/logger');
 
 // Short-lived, single-use cookie used only to verify that the `state` coming
 // back on /google/callback was actually issued by OUR /google redirect, not
@@ -144,7 +145,12 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     tokenService.setRefreshCookie(res, data.refreshToken);
     res.redirect(`${config.frontendUrl}/dashboard`);
   } catch (err) {
-    console.error('Google sign-in failed:', err.message);
+    // logger.error only reports to Sentry when err isn't an operational
+    // AppError (see config/logger.js) — loginWithGoogle already throws
+    // AppError.unauthorized for the routine "user denied consent"/"exchange
+    // failed" cases, so this won't spam Sentry with those, only genuinely
+    // unexpected failures.
+    logger.error('Google sign-in failed', err);
     res.redirect(failureRedirect);
   }
 });

@@ -1,7 +1,7 @@
 // src/server.js
 const http = require('http');
 const express = require('express');
-const morgan = require('morgan');
+const pinoHttp = require('pino-http');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -12,6 +12,7 @@ const connectDB = require('./config/db');
 const prisma = require('./config/prisma');
 const routes = require('./routes/index');
 const { enabled: sentryEnabled, Sentry } = require('./config/sentry');
+const logger = require('./config/logger');
 const errorHandler = require('./middlewares/error.middleware');
 const { initSocket } = require('./sockets/socket.handler');
 const paymentController = require('./controllers/payment.controller');
@@ -37,7 +38,12 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), pay
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(morgan(config.isProd ? 'combined' : 'dev'));
+// Replaces morgan — structured, request-id-correlated JSON logs through the
+// same centralized logger everything else now uses, instead of a second,
+// unrelated plain-text log format. Mounted after the raw-body Stripe
+// webhook route above, same as morgan was, so that request's body is never
+// logged either.
+app.use(pinoHttp({ logger: logger.pino }));
 
 // Serve uploaded attachments. The frontend and API are on different origins
 // (even in prod: motive-app-*.onrender.com vs motive-api-*.onrender.com), and
@@ -102,20 +108,20 @@ initSocket(server);
 connectDB()
   .then(() => {
     server.listen(config.port, () => {
-      console.log(`🚀 Server running at http://localhost:${config.port} [${config.env}]`);
+      logger.info(`Server running at http://localhost:${config.port}`, { env: config.env });
     });
   })
   .catch((err) => {
-    console.error('❌ Failed to connect to the database:', err.message);
+    logger.error('Failed to connect to the database', err);
     process.exit(1);
   });
 
 // ── Graceful shutdown — drain connections before exit ───
 const shutdown = (signal) => {
-  console.log(`\n${signal} received — shutting down gracefully…`);
+  logger.info('Shutting down gracefully', { signal });
   server.close(() => {
     prisma.$disconnect().then(() => {
-      console.log('✅ Closed HTTP server and DB connection.');
+      logger.info('Closed HTTP server and DB connection');
       process.exit(0);
     });
   });
@@ -125,13 +131,14 @@ const shutdown = (signal) => {
 ['SIGTERM', 'SIGINT'].forEach((sig) => process.on(sig, () => shutdown(sig)));
 
 // Last-resort safety nets — log and exit so the orchestrator can restart cleanly.
+// logger.error already calls Sentry.captureException for non-operational
+// errors (see config/logger.js), so the manual Sentry calls this file used
+// to make here are redundant with it and have been removed in favor of it.
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
-  if (sentryEnabled) Sentry.captureException(reason);
+  logger.error('Unhandled Rejection', reason instanceof Error ? reason : new Error(String(reason)));
 });
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  if (sentryEnabled) Sentry.captureException(err);
+  logger.error('Uncaught Exception', err);
   process.exit(1);
 });
 

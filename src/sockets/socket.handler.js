@@ -1,5 +1,6 @@
 const { verifyToken } = require('../utils/jwt.util');
 const config = require('../config/env');
+const logger = require('../config/logger');
 
 let ioInstance;
 
@@ -16,7 +17,11 @@ const initSocket = (server) => {
   });
 
   ioInstance.on('connection', (socket) => {
-    console.log(`🔌 User connected: ${socket.id}`);
+    // debug, not info — this was unconditional console.log on every single
+    // connection, the highest-volume log line this app produces. Still
+    // available with LOG_LEVEL=debug for troubleshooting, but doesn't burn
+    // through Logtail's metered free-tier ingestion by default.
+    logger.debug('User connected', { socketId: socket.id });
 
     // Emit updated tasks to all users
     socket.on('taskUpdated', (data) => {
@@ -36,8 +41,11 @@ const initSocket = (server) => {
       try {
         const payload = verifyToken(token);
         if (payload.type === 'access') userId = payload.id;
-      } catch {
-        /* no valid token — still let them join as an anonymous viewer */
+      } catch (err) {
+        // Was fully silent — an invalid/expired token here has zero trace
+        // today. Still lets them join as an anonymous viewer (unchanged
+        // behavior), just no longer invisible.
+        logger.warn('page:join with an invalid token — joining as anonymous', { pageId, err: err.message });
       }
       socket.join(`page:${pageId}`);
       socket.data.pageId = pageId;
@@ -58,8 +66,10 @@ const initSocket = (server) => {
           socket.data.userId = payload.id;
           socket.join(`user:${payload.id}`);
         }
-      } catch {
-        /* no valid token — socket just won't receive notification pushes */
+      } catch (err) {
+        // Was fully silent. Behavior unchanged (socket just won't receive
+        // notification pushes) — just no longer invisible.
+        logger.warn('identify with an invalid token — no notification room joined', { err: err.message });
       }
     });
 
@@ -81,7 +91,7 @@ const initSocket = (server) => {
       if (socket.data.pageId) {
         socket.to(`page:${socket.data.pageId}`).emit('presence:leave', { socketId: socket.id });
       }
-      console.log(`⚡ User disconnected: ${socket.id}`);
+      logger.debug('User disconnected', { socketId: socket.id });
     });
   });
 

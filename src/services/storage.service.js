@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../config/env');
+const logger = require('../config/logger');
 
 const R2_ENABLED = !!(
   config.r2.accountId &&
@@ -80,7 +81,10 @@ exports.deleteFile = async (fileUrl) => {
       const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
       await getS3Client().send(new DeleteObjectCommand({ Bucket: config.r2.bucket, Key: key }));
     } catch (err) {
-      console.error('R2 delete error:', err.message);
+      // Was console-only — an orphaned object silently left in the bucket
+      // is exactly the kind of failure that's invisible until someone
+      // notices the storage bill, unless it's reported.
+      logger.error('R2 delete error', err, { key });
     }
     return;
   }

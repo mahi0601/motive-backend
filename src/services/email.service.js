@@ -5,6 +5,7 @@
 // the app still boots without RESEND_API_KEY configured — email sending
 // just no-ops with a console warning instead of crashing the process.
 const config = require('../config/env');
+const logger = require('../config/logger');
 
 let resendClient;
 function getClient() {
@@ -19,12 +20,20 @@ function getClient() {
 exports.sendEmail = async ({ to, subject, html }) => {
   const client = getClient();
   if (!client) {
-    console.warn(`📧 RESEND_API_KEY not set — skipping email to ${to}: "${subject}"`);
+    // Was interpolating the recipient's actual email address straight into
+    // a console.warn message — a real PII leak into stdout (and, once
+    // Logtail is configured, into a third-party log store). This is a
+    // config-state warning ("email sending is disabled"), not something
+    // that needs the specific address to be useful.
+    logger.warn('RESEND_API_KEY not set — skipping email send', { subject });
     return;
   }
   try {
     await client.emails.send({ from: config.resend.fromEmail, to, subject, html });
   } catch (err) {
-    console.error('📧 Email send error:', err.message);
+    // Reportable: a real send failure (bad API key, Resend outage, domain
+    // not verified) is exactly the kind of thing that used to be
+    // completely invisible to Sentry.
+    logger.error('Email send error', err, { subject });
   }
 };
