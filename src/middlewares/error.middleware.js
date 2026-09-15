@@ -1,5 +1,6 @@
 const AppError = require('../utils/AppError');
 const config = require('../config/env');
+const logger = require('../config/logger');
 
 // Translate well-known library errors into clean, client-safe responses.
 function normalize(err) {
@@ -33,9 +34,14 @@ module.exports = (err, _req, res, _next) => {
   const statusCode = normalized.statusCode || 500;
   const isOperational = normalized.isOperational || statusCode < 500;
 
-  // Log unexpected (non-operational) errors with full detail.
+  // Log unexpected (non-operational) errors with full detail — via the raw
+  // pino instance, not logger.error(), deliberately: server.js's
+  // Sentry.setupExpressErrorHandler already runs before this middleware and
+  // has already reported this exact error to Sentry, so calling
+  // logger.error() here (which also reports) would double-report the same
+  // exception. This still gets the structured stdout/Logtail logging.
   if (!isOperational) {
-    console.error('💥 Unhandled error:', err);
+    logger.pino.error({ err }, 'Unhandled error');
   }
 
   res.status(statusCode).json({

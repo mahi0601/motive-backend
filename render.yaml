@@ -57,6 +57,11 @@ services:
       # errors are only logged to stdout (Render's log retention is short).
       - key: SENTRY_DSN
         sync: false
+      # Optional structured-log shipping to Better Stack (free tier: 1GB/mo,
+      # 3-day retention) on top of stdout — see .env.example. Without it,
+      # logs still go to stdout same as SENTRY_DSN's note above.
+      - key: LOGTAIL_SOURCE_TOKEN
+        sync: false
       # File storage (Cloudflare R2) — without these, uploads fall back to
       # local disk, which Render wipes on every deploy/restart. See
       # motive-backend/.env.example for how to create the bucket/token.

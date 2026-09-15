@@ -97,35 +97,41 @@ config.corsOriginCheck = (origin, cb) => {
   return cb(new Error(`CORS blocked for origin: ${origin}`));
 };
 
+// Required by ./logger only from here on — logger.js has no dependency back
+// on this module (it reads process.env directly, see its own comment), so
+// this isn't circular; it's just placed after `config` exists so the
+// warnings below can go through it instead of raw console.warn.
+const logger = require('./logger');
+
 // Payments are opt-in: only enforced when a payment route is actually hit
 // (see payment.service.js), so the rest of the app still boots without Stripe configured.
 if (config.isProd && (!config.stripe.secretKey || !config.stripe.webhookSecret)) {
-  console.warn('⚠️  STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET not set — payment endpoints will fail.');
+  logger.warn('STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET not set — payment endpoints will fail.');
 }
 
 // Same opt-in pattern — password-reset emails just silently no-op without it
 // (see email.service.js), rather than crashing the app at boot.
 if (config.isProd && !config.resend.apiKey) {
-  console.warn('⚠️  RESEND_API_KEY not set — password reset emails will not be sent.');
+  logger.warn('RESEND_API_KEY not set — password reset emails will not be sent.');
 }
 
 // Uploads fall back to local disk without this — fine for dev, but Render's
 // disk is ephemeral, so uploaded files vanish on every deploy/restart in
 // production without R2 configured (see storage.service.js).
 if (config.isProd && !config.r2.bucket) {
-  console.warn('⚠️  R2 storage not configured — uploads will use ephemeral local disk in production.');
+  logger.warn('R2 storage not configured — uploads will use ephemeral local disk in production.');
 }
 
 // Sentry (see instrument.js / config/sentry.js) is opt-in the same way —
 // the app runs fine without SENTRY_DSN, it just won't report errors anywhere.
 if (config.isProd && !process.env.SENTRY_DSN) {
-  console.warn('⚠️  SENTRY_DSN not set — errors will only be logged to stdout in production.');
+  logger.warn('SENTRY_DSN not set — errors will only be logged to stdout in production.');
 }
 
 // Google login is opt-in too — /api/auth/google 400s without it, everything
 // else (including email/password auth) works the same either way.
 if (config.isProd && !config.google.clientId) {
-  console.warn('⚠️  GOOGLE_CLIENT_ID not set — "Continue with Google" will be unavailable.');
+  logger.warn('GOOGLE_CLIENT_ID not set — "Continue with Google" will be unavailable.');
 }
 
 module.exports = config;

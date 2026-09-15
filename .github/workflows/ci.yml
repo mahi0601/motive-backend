@@ -42,6 +42,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npx prisma validate
       - run: npx prisma generate
       # Applies every committed migration to the fresh container above —
