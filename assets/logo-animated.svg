@@ -1,0 +1,32 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Motive">
+  <defs>
+    <linearGradient id="motiveGrad" x1="8" y1="8" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C5CF6"/>
+      <stop offset="0.55" stop-color="#9B5CFF"/>
+      <stop offset="1" stop-color="#C45BD6"/>
+    </linearGradient>
+    <style>
+      .motive-mark {
+        animation: motive-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+        transform-box: fill-box;
+      }
+      .motive-spark {
+        transform-origin: 100px 35px;
+        animation: motive-pulse 2.6s ease-in-out 0.9s infinite;
+      }
+      @keyframes motive-in {
+        from { opacity: 0; transform: translateY(8px) scale(0.94); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes motive-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.28); opacity: 0.72; }
+      }
+    </style>
+  </defs>
+  <g class="motive-mark">
+    <rect x="8" y="8" width="112" height="112" rx="33" fill="url(#motiveGrad)"/>
+    <path d="M36 66.6 L56.4 86.8 L92 43.6" stroke="white" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <circle class="motive-spark" cx="100" cy="35" r="7.5" fill="#FFC04D"/>
+  </g>
+</svg>

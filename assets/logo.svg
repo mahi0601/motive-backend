@@ -1,0 +1,14 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="60" y1="40" x2="452" y2="472" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C5CF6"/>
+      <stop offset="0.55" stop-color="#9B5CFF"/>
+      <stop offset="1" stop-color="#C45BD6"/>
+    </linearGradient>
+  </defs>
+  <!-- full-bleed background so the platform mask never cuts content -->
+  <rect width="512" height="512" fill="url(#g)"/>
+  <!-- checkmark + spark centred within the 80% safe zone -->
+  <path d="M158 268 L238 348 L368 186" stroke="white" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="392" cy="170" r="30" fill="#FFC04D"/>
+</svg>
