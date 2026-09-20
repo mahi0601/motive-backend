@@ -7,3 +7,9 @@ uploads
 .DS_Store
 dist
 coverage
+
+# Editor config — the frontend repo already ignores these; the backend
+# didn't, so opening it directly in VSCode/IntelliJ would have tracked
+# workspace settings by default.
+.vscode
+.idea
