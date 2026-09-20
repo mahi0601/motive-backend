@@ -13,6 +13,13 @@ enum WorkspaceRole {
   viewer
 }
 
+enum InviteStatus {
+  pending
+  accepted
+  declined
+  revoked
+}
+
 enum BlockType {
   paragraph
   heading1
@@ -78,6 +85,7 @@ model User {
   pages           Page[]
   workspacesOwned Workspace[]
   memberships     WorkspaceMember[]
+  invitesSent     WorkspaceInvite[]
   comments        Comment[]
   filesUploaded   File[]
   notifications   Notification[]
@@ -92,6 +100,7 @@ model Workspace {
   ownerId   String
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members   WorkspaceMember[]
+  invites   WorkspaceInvite[]
   pages     Page[]
   tasks     Task[]
   createdAt DateTime @default(now())
@@ -111,6 +120,30 @@ model WorkspaceMember {
 
   @@unique([workspaceId, userId])
   @@index([userId])
+}
+
+// Lets an invite reach someone who doesn't have a Motive account yet —
+// `inviteMember` used to require an existing account, which defeated the
+// point of inviting someone. `tokenHash` is sha256(raw); the raw token only
+// ever exists in the invite email, never stored — see workspace.service.js.
+model WorkspaceInvite {
+  id           String       @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String
+  role         WorkspaceRole @default(editor)
+  tokenHash    String       @unique
+  status       InviteStatus @default(pending)
+  invitedById  String
+  invitedBy    User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // A re-invite recycles this row (new token, reset expiry) instead of
+  // inserting a second pending invite for the same email.
+  @@unique([workspaceId, email])
+  @@index([workspaceId, status])
 }
 
 model Page {

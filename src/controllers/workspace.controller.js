@@ -11,7 +11,32 @@ exports.create = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, workspace });
 });
 
-exports.inviteMember = asyncHandler(async (req, res) => {
-  const member = await WorkspaceService.inviteMember(req.params.id, req.user.id, req.body.email);
-  res.status(201).json({ success: true, member });
+exports.createInvite = asyncHandler(async (req, res) => {
+  const invite = await WorkspaceService.createInvite(req.params.id, req.user.id, req.body.email, req.body.role);
+  res.status(201).json({ success: true, invite });
+});
+
+exports.listInvites = asyncHandler(async (req, res) => {
+  const invites = await WorkspaceService.listInvites(req.params.id, req.user.id);
+  res.json({ success: true, invites });
+});
+
+exports.resendInvite = asyncHandler(async (req, res) => {
+  const invite = await WorkspaceService.resendInvite(req.params.id, req.params.inviteId, req.user.id);
+  res.json({ success: true, invite });
+});
+
+exports.revokeInvite = asyncHandler(async (req, res) => {
+  await WorkspaceService.revokeInvite(req.params.id, req.params.inviteId, req.user.id);
+  res.json({ success: true });
+});
+
+exports.updateMemberRole = asyncHandler(async (req, res) => {
+  const member = await WorkspaceService.updateMemberRole(req.params.id, req.params.userId, req.body.role, req.user.id);
+  res.json({ success: true, member });
+});
+
+exports.removeMember = asyncHandler(async (req, res) => {
+  await WorkspaceService.removeMember(req.params.id, req.params.userId, req.user.id);
+  res.json({ success: true });
 });
