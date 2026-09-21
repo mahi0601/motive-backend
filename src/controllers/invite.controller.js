@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const WorkspaceService = require('../services/workspace.service');
 const asyncHandler = require('../utils/asyncHandler');
+const { emitNotification } = require('../sockets/socket.handler');
 
 // Public — no auth. Metadata only (see WorkspaceService#getInviteByToken for
 // exactly what's safe to expose to someone who isn't a member yet).
@@ -15,7 +16,11 @@ exports.getByToken = asyncHandler(async (req, res) => {
 // for fields the token doesn't carry.
 exports.accept = asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: { email: true } });
-  const workspace = await WorkspaceService.acceptInvite(req.params.token, req.user.id, user.email);
+  const { workspace, notification } = await WorkspaceService.acceptInvite(req.params.token, req.user.id, user.email);
+  // Persist-in-service / emit-in-controller — same split comment.controller.js
+  // already uses for @mention notifications. `notification` is null when the
+  // invite was already fulfilled, so there's nothing new to tell the inviter.
+  if (notification) emitNotification(notification.userId, notification);
   res.json({ success: true, workspace });
 });
 

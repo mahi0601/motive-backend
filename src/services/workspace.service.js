@@ -35,14 +35,32 @@ const safeInviteFields = (invite) => ({
   updatedAt: invite.updatedAt,
 });
 
+// Inline styles only — email clients don't load stylesheets. Kept to a
+// single centered card rather than a full bulletproof-email table layout;
+// this is a step up from the plain unstyled <p> tags password-reset still
+// uses (out of scope here — see PLAN), not an attempt at pixel parity across
+// every mail client.
 const sendInviteEmail = async (invite, workspace, inviterName, rawToken) => {
   const acceptUrl = `${config.frontendUrl}/invite/${rawToken}`;
+  const roleLabel = invite.role === 'viewer' ? 'a viewer' : 'an editor';
   await emailService.sendEmail({
     to: invite.email,
     subject: `You're invited to join ${workspace.name} on Motive`,
-    html: `<p>${inviterName} invited you to join <strong>${workspace.name}</strong> on Motive as ${invite.role === 'viewer' ? 'a viewer' : 'an editor'}.</p>
-<p><a href="${acceptUrl}">Click here to accept the invite</a>. This link expires in 7 days.</p>
-<p>If you weren't expecting this, you can safely ignore this email.</p>`,
+    html: `<div style="background:#F6F8F9;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;border:1px solid #DDE4E7;overflow:hidden;">
+    <div style="background:linear-gradient(135deg,#0E4C5C,#1B7A8C);padding:24px 32px;">
+      <span style="color:#FFFFFF;font-size:18px;font-weight:700;">Motive</span>
+    </div>
+    <div style="padding:32px;">
+      <h1 style="margin:0 0 16px;font-size:20px;color:#0F1A20;">You're invited to ${workspace.name}</h1>
+      <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5E6E77;">
+        <strong style="color:#0F1A20;">${inviterName}</strong> invited you to join <strong style="color:#0F1A20;">${workspace.name}</strong> on Motive as ${roleLabel}.
+      </p>
+      <a href="${acceptUrl}" style="display:inline-block;background:#1B7A8C;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 24px;border-radius:8px;">Accept invite</a>
+      <p style="margin:24px 0 0;font-size:13px;color:#5E6E77;">This link expires in 7 days. If you weren't expecting this, you can safely ignore this email.</p>
+    </div>
+  </div>
+</div>`,
   });
 };
 
@@ -246,6 +264,10 @@ const findInviteForResponse = async (rawToken, userEmail) => {
   return invite;
 };
 
+// Returns { workspace, notification } — notification is the row for the
+// inviter to be emitted over the socket (persist-in-service /
+// emit-in-controller is the house pattern comment.service.js documents),
+// null when the invite was already fulfilled (nothing new to tell anyone).
 exports.acceptInvite = async (rawToken, userId, userEmail) => {
   const invite = await findInviteForResponse(rawToken, userEmail);
   return prisma.$transaction(async (tx) => {
@@ -256,7 +278,24 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
       await tx.workspaceMember.create({ data: { workspaceId: invite.workspaceId, userId, role: invite.role } });
     }
     await tx.workspaceInvite.update({ where: { id: invite.id }, data: { status: 'accepted' } });
-    return tx.workspace.findUnique({ where: { id: invite.workspaceId } });
+
+    const [workspace, accepter] = await Promise.all([
+      tx.workspace.findUnique({ where: { id: invite.workspaceId } }),
+      tx.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    ]);
+
+    let notification = null;
+    if (!alreadyMember) {
+      notification = await tx.notification.create({
+        data: {
+          userId: invite.invitedById,
+          title: 'New team member',
+          message: `${accepter?.name || 'Someone'} joined ${workspace.name}`,
+          type: 'invite_accepted',
+        },
+      });
+    }
+    return { workspace, notification };
   });
 };
 
@@ -281,4 +320,46 @@ exports.removeMember = async (workspaceId, memberUserId, requesterId) => {
   const ws = await assertOwner(workspaceId, requesterId);
   if (memberUserId === ws.ownerId) throw AppError.badRequest("Can't remove the workspace owner");
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId: memberUserId } } });
+};
+
+// getRole derives 'owner' from Workspace.ownerId directly, not from a
+// WorkspaceMember row (see getRole's own comment) — but the owner ALSO has
+// an explicit member row with role 'owner', set at workspace creation. Both
+// have to move together in one transaction or they desync, which is exactly
+// the risk this was flagged against in the original roadmap.
+exports.transferOwnership = async (workspaceId, newOwnerUserId, requesterId) => {
+  const ws = await assertOwner(workspaceId, requesterId);
+  if (newOwnerUserId === ws.ownerId) throw AppError.badRequest('Already the owner');
+  const target = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId: newOwnerUserId } },
+  });
+  if (!target) throw AppError.notFound('That user is not a member of this workspace');
+
+  await prisma.$transaction([
+    prisma.workspace.update({ where: { id: workspaceId }, data: { ownerId: newOwnerUserId } }),
+    prisma.workspaceMember.update({
+      where: { workspaceId_userId: { workspaceId, userId: requesterId } },
+      data: { role: 'editor' },
+    }),
+    prisma.workspaceMember.update({
+      where: { workspaceId_userId: { workspaceId, userId: newOwnerUserId } },
+      data: { role: 'owner' },
+    }),
+  ]);
+};
+
+// Self-service, deliberately not a special case bolted onto removeMember —
+// that function is owner-acting-on-someone-else (assertOwner-gated); this is
+// self-acting, a different authorization shape, so it's its own function.
+exports.leaveWorkspace = async (workspaceId, userId) => {
+  const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { ownerId: true } });
+  if (!ws) throw AppError.notFound('Workspace not found');
+  if (ws.ownerId === userId) {
+    throw AppError.badRequest('Transfer ownership before leaving a workspace you own');
+  }
+  const membership = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+  });
+  if (!membership) throw AppError.notFound('Not a member of this workspace');
+  await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId } } });
 };

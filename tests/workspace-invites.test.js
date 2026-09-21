@@ -123,17 +123,26 @@ describe('workspace invite lifecycle', () => {
       return { raw, invite };
     }
 
-    test('acceptInvite succeeds when the caller\'s email matches the invite', async () => {
+    test('acceptInvite succeeds when the caller\'s email matches the invite, and notifies the inviter', async () => {
       const invitee = await makeUser('acceptMatch');
       const email = invitee.email;
       const { raw } = await makePendingInvite(email);
-      const ws = await workspaceService.acceptInvite(raw, invitee.id, email);
+      const { workspace: ws, notification } = await workspaceService.acceptInvite(raw, invitee.id, email);
       expect(ws.id).toBe(workspace.id);
       const member = await prisma.workspaceMember.findUnique({
         where: { workspaceId_userId: { workspaceId: workspace.id, userId: invitee.id } },
       });
       expect(member).toBeTruthy();
       expect(member.role).toBe('editor');
+
+      // The owner gets told a real person joined — closes the loop that used
+      // to leave this silent (see workspace.service.js#acceptInvite).
+      expect(notification).toBeTruthy();
+      expect(notification.userId).toBe(owner.id);
+      expect(notification.type).toBe('invite_accepted');
+      const stored = await prisma.notification.findUnique({ where: { id: notification.id } });
+      expect(stored).toBeTruthy();
+
       await cleanupUsers(invitee);
     });
 
@@ -213,6 +222,73 @@ describe('workspace invite lifecycle', () => {
       });
       expect(gone).toBeNull();
       await cleanupUsers(toRemove);
+    });
+  });
+
+  describe('transferOwnership — Workspace.ownerId and both member roles move together', () => {
+    test('a non-owner cannot transfer ownership', async () => {
+      await expect(workspaceService.transferOwnership(workspace.id, editor.id, editor.id)).rejects.toThrow();
+    });
+
+    test('the owner can transfer to an existing member; both roles flip, getRole agrees', async () => {
+      const transferOwner = await makeUser('transferOwner');
+      const transferTarget = await makeUser('transferTarget');
+      const ws = await makeWorkspaceWithMembers(transferOwner, { editors: [transferTarget] });
+
+      await workspaceService.transferOwnership(ws.id, transferTarget.id, transferOwner.id);
+
+      const updatedWs = await prisma.workspace.findUnique({ where: { id: ws.id } });
+      expect(updatedWs.ownerId).toBe(transferTarget.id);
+
+      const oldOwnerMember = await prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: ws.id, userId: transferOwner.id } },
+      });
+      const newOwnerMember = await prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: ws.id, userId: transferTarget.id } },
+      });
+      expect(oldOwnerMember.role).toBe('editor');
+      expect(newOwnerMember.role).toBe('owner');
+
+      // getRole derives 'owner' from Workspace.ownerId directly (see its own
+      // comment) — this is exactly the desync this transaction guards against.
+      expect(await workspaceService.getRole(ws.id, transferTarget.id)).toBe('owner');
+      expect(await workspaceService.getRole(ws.id, transferOwner.id)).toBe('editor');
+
+      await cleanupUsers(transferOwner, transferTarget);
+    });
+
+    test('cannot transfer ownership to someone who is not a member', async () => {
+      const transferOwner = await makeUser('transferOwnerB');
+      const ws = await makeWorkspaceWithMembers(transferOwner);
+      const stranger = await makeUser('transferStranger');
+      await expect(workspaceService.transferOwnership(ws.id, stranger.id, transferOwner.id)).rejects.toThrow();
+      await cleanupUsers(transferOwner, stranger);
+    });
+  });
+
+  describe('leaveWorkspace — self-service, owner cannot leave', () => {
+    test('the owner cannot leave their own workspace', async () => {
+      await expect(workspaceService.leaveWorkspace(workspace.id, owner.id)).rejects.toThrow();
+    });
+
+    test('a non-owner member can leave without affecting anyone else', async () => {
+      const leaver = await makeUser('leaver');
+      await prisma.workspaceMember.create({ data: { workspaceId: workspace.id, userId: leaver.id, role: 'viewer' } });
+
+      await workspaceService.leaveWorkspace(workspace.id, leaver.id);
+
+      const gone = await prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: workspace.id, userId: leaver.id } },
+      });
+      expect(gone).toBeNull();
+      expect(await workspaceService.getRole(workspace.id, owner.id)).toBe('owner');
+      expect(await workspaceService.getRole(workspace.id, editor.id)).toBe('editor');
+
+      await cleanupUsers(leaver);
+    });
+
+    test('a non-member cannot "leave" a workspace they never joined', async () => {
+      await expect(workspaceService.leaveWorkspace(workspace.id, outsider.id)).rejects.toThrow();
     });
   });
 });

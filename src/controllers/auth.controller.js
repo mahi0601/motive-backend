@@ -91,13 +91,23 @@ exports.googleRedirect = asyncHandler(async (req, res) => {
   const nonce = crypto.randomBytes(16).toString('hex');
   res.cookie(OAUTH_STATE_COOKIE, nonce, oauthStateCookieOptions());
 
+  // An invite token riding along on `?invite=` (see GoogleSignInButton.jsx —
+  // Login/Register pass it through when the page itself was reached via an
+  // invite link) so choosing "Continue with Google" doesn't silently drop
+  // the invite the way it used to. It's inert extra data, not part of the
+  // CSRF defense: the nonce+mode check below is what actually verifies this
+  // state came from us. Raw invite tokens are hex (see
+  // workspace.service.js#newInviteToken) — no dots, safe to append.
+  const inviteToken = typeof req.query.invite === 'string' ? req.query.invite : '';
+  const state = inviteToken ? `${nonce}.${mode}.${inviteToken}` : `${nonce}.${mode}`;
+
   const params = new URLSearchParams({
     client_id: config.google.clientId,
     redirect_uri: config.google.redirectUri,
     response_type: 'code',
     scope: 'openid email profile',
     prompt: 'select_account',
-    state: `${nonce}.${mode}`,
+    state,
   });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
@@ -125,7 +135,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   // of outcome so a captured callback URL can't be replayed either.
   const expectedNonce = req.cookies?.[OAUTH_STATE_COOKIE];
   res.clearCookie(OAUTH_STATE_COOKIE, oauthStateCookieOptions());
-  const [nonce, mode] = typeof state === 'string' ? state.split('.') : [];
+  const [nonce, mode, inviteToken] = typeof state === 'string' ? state.split('.') : [];
   const stateValid = !!expectedNonce && nonce === expectedNonce;
   const isNative = mode === 'native';
   // Default to the web failure page when state can't be trusted at all —
@@ -140,10 +150,16 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     const data = await AuthService.loginWithGoogle(code);
     if (isNative) {
       const exchangeCode = await AuthService.createNativeExchangeCode(data.user.id);
-      return res.redirect(`${NATIVE_CALLBACK_URL}?code=${exchangeCode}`);
+      const nativeUrl = inviteToken
+        ? `${NATIVE_CALLBACK_URL}?code=${exchangeCode}&invite=${inviteToken}`
+        : `${NATIVE_CALLBACK_URL}?code=${exchangeCode}`;
+      return res.redirect(nativeUrl);
     }
     tokenService.setRefreshCookie(res, data.refreshToken);
-    res.redirect(`${config.frontendUrl}/dashboard`);
+    // Same hand-off Login.jsx/Register.jsx already use for the email/password
+    // path — land on the invite page (which now sees an authenticated user)
+    // instead of /dashboard when this sign-in was reached via an invite link.
+    res.redirect(inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`);
   } catch (err) {
     // logger.error only reports to Sentry when err isn't an operational
     // AppError (see config/logger.js) — loginWithGoogle already throws

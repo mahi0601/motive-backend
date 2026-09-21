@@ -40,3 +40,13 @@ exports.removeMember = asyncHandler(async (req, res) => {
   await WorkspaceService.removeMember(req.params.id, req.params.userId, req.user.id);
   res.json({ success: true });
 });
+
+exports.transferOwnership = asyncHandler(async (req, res) => {
+  await WorkspaceService.transferOwnership(req.params.id, req.body.userId, req.user.id);
+  res.json({ success: true });
+});
+
+exports.leaveWorkspace = asyncHandler(async (req, res) => {
+  await WorkspaceService.leaveWorkspace(req.params.id, req.user.id);
+  res.json({ success: true });
+});
