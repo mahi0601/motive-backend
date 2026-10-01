@@ -4,6 +4,8 @@
 // ./config/env. See https://docs.sentry.io/platforms/node/
 require('dotenv').config();
 
+const { scrubEvent, scrubBreadcrumb } = require('./utils/sentryScrub');
+
 if (process.env.SENTRY_DSN) {
   const Sentry = require('@sentry/node');
   Sentry.init({
@@ -12,5 +14,9 @@ if (process.env.SENTRY_DSN) {
     // Low sample rate — this is a small app; full tracing isn't needed to
     // get value out of error tracking, just cheap enough to leave always on.
     tracesSampleRate: 0.1,
+    // Status-page, invite and checkout tokens ride in URLs; keep them out of reports.
+    beforeSend: scrubEvent,
+    beforeSendTransaction: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
   });
 }
