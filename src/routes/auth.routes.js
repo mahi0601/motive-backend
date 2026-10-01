@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const AuthController = require('../controllers/auth.controller');
 const validate = require('../middlewares/validate.middleware');
+const sameSite = require('../middlewares/sameSite.middleware');
 const {
   registerRules,
   loginRules,
@@ -10,8 +11,8 @@ const {
 
 router.post('/register', registerRules, validate, AuthController.register);
 router.post('/login', loginRules, validate, AuthController.login);
-router.post('/refresh', AuthController.refresh); // uses httpOnly cookie, no body
-router.post('/logout', AuthController.logout);
+router.post('/refresh', sameSite, AuthController.refresh); // uses httpOnly cookie, no body
+router.post('/logout', sameSite, AuthController.logout);
 // Rate-limited alongside login/register in server.js — same brute-force/abuse surface.
 router.post('/forgot-password', forgotPasswordRules, validate, AuthController.forgotPassword);
 router.post('/reset-password', resetPasswordRules, validate, AuthController.resetPassword);

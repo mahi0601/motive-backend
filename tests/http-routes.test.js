@@ -11,7 +11,7 @@ const taskService = require('../src/services/task.service');
 const errorHandler = require('../src/middlewares/error.middleware');
 const { makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
 
-const bearer = (user) => ({ Authorization: `Bearer ${tokenService.issueTokens(user).accessToken}` });
+const bearer = async (user) => ({ Authorization: `Bearer ${(await tokenService.issueTokens(user)).accessToken}` });
 
 describe('HTTP routes', () => {
   let alice, bob;
@@ -43,7 +43,7 @@ describe('HTTP routes', () => {
     });
 
     test('a refresh token cannot authenticate an API call', async () => {
-      const { refreshToken } = tokenService.issueTokens(alice);
+      const { refreshToken } = await tokenService.issueTokens(alice);
       const res = await request(app).get('/api/tasks').set('Authorization', `Bearer ${refreshToken}`);
       expect(res.status).toBe(401);
     });
@@ -64,22 +64,22 @@ describe('HTTP routes', () => {
 
   describe('tasks', () => {
     test('creates a task and lists it for its owner', async () => {
-      const created = await request(app).post('/api/tasks').set(bearer(alice)).send({ title: 'From HTTP' });
+      const created = await request(app).post('/api/tasks').set(await bearer(alice)).send({ title: 'From HTTP' });
       expect(created.status).toBe(201);
 
-      const list = await request(app).get('/api/tasks').set(bearer(alice));
+      const list = await request(app).get('/api/tasks').set(await bearer(alice));
       expect(list.status).toBe(200);
       expect(JSON.stringify(list.body)).toContain('From HTTP');
     });
 
     test("another user cannot see or modify someone else's task", async () => {
-      const list = await request(app).get('/api/tasks').set(bearer(bob));
+      const list = await request(app).get('/api/tasks').set(await bearer(bob));
       expect(JSON.stringify(list.body)).not.toContain(aliceTask.id);
 
-      const patch = await request(app).patch(`/api/tasks/${aliceTask.id}`).set(bearer(bob)).send({ title: 'pwned' });
+      const patch = await request(app).patch(`/api/tasks/${aliceTask.id}`).set(await bearer(bob)).send({ title: 'pwned' });
       expect(patch.status).toBe(404);
 
-      const del = await request(app).delete(`/api/tasks/${aliceTask.id}`).set(bearer(bob));
+      const del = await request(app).delete(`/api/tasks/${aliceTask.id}`).set(await bearer(bob));
       expect(del.status).toBe(404);
 
       const still = await prisma.task.findUnique({ where: { id: aliceTask.id } });
@@ -115,16 +115,16 @@ describe('HTTP routes', () => {
     });
 
     test('only the owner can enable or disable sharing', async () => {
-      const asMember = await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(member));
+      const asMember = await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(member));
       expect(asMember.status).toBe(403);
-      const asOutsider = await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(bob));
+      const asOutsider = await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(bob));
       expect(asOutsider.status).toBe(403);
-      const del = await request(app).delete(`/api/workspaces/${ws.id}/share`).set(bearer(member));
+      const del = await request(app).delete(`/api/workspaces/${ws.id}/share`).set(await bearer(member));
       expect(del.status).toBe(403);
     });
 
     test('serves a minimal public view with no auth, and no-store caching', async () => {
-      const enabled = await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(owner));
+      const enabled = await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(owner));
       expect(enabled.status).toBe(200);
       const { token } = enabled.body.share;
       expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -149,23 +149,23 @@ describe('HTTP routes', () => {
     });
 
     test('regenerating the link invalidates the old one', async () => {
-      const first = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(owner))).body.share.token;
-      const second = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(owner))).body.share.token;
+      const first = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(owner))).body.share.token;
+      const second = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(owner))).body.share.token;
       expect(second).not.toBe(first);
       expect((await request(app).get(`/api/status/${first}`)).status).toBe(404);
       expect((await request(app).get(`/api/status/${second}`)).status).toBe(200);
     });
 
     test('disabling the link turns the page off', async () => {
-      const { token } = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(owner))).body.share;
-      const off = await request(app).delete(`/api/workspaces/${ws.id}/share`).set(bearer(owner));
+      const { token } = (await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(owner))).body.share;
+      const off = await request(app).delete(`/api/workspaces/${ws.id}/share`).set(await bearer(owner));
       expect(off.status).toBe(200);
       expect((await request(app).get(`/api/status/${token}`)).status).toBe(404);
     });
 
     test('the token hash never appears in workspace responses, but sharing state does', async () => {
-      await request(app).post(`/api/workspaces/${ws.id}/share`).set(bearer(owner));
-      const res = await request(app).get('/api/workspaces').set(bearer(member));
+      await request(app).post(`/api/workspaces/${ws.id}/share`).set(await bearer(owner));
+      const res = await request(app).get('/api/workspaces').set(await bearer(member));
       const listed = res.body.workspaces.find((w) => w.id === ws.id);
       expect(listed).not.toHaveProperty('shareTokenHash');
       expect(listed.shareEnabledAt).toBeTruthy();
@@ -187,7 +187,7 @@ describe('HTTP routes', () => {
 
   describe('billing', () => {
     test('the billing portal needs a billing account', async () => {
-      const res = await request(app).post('/api/payments/portal').set(bearer(bob));
+      const res = await request(app).post('/api/payments/portal').set(await bearer(bob));
       // A fresh user has never been a Stripe customer — 400, not a 500 from Stripe
       // (or from payments being unconfigured, which would be a 500).
       expect(res.status).toBe(400);
@@ -195,7 +195,7 @@ describe('HTTP routes', () => {
     });
 
     test('a user’s subscription state is exposed, but never Stripe ids', async () => {
-      const res = await request(app).get('/api/users/me').set(bearer(bob));
+      const res = await request(app).get('/api/users/me').set(await bearer(bob));
       expect(res.status).toBe(200);
       expect(res.body.user).toMatchObject({ isPro: false, proLifetime: false, subscriptionStatus: null });
       expect(res.body.user).not.toHaveProperty('stripeCustomerId');
@@ -208,7 +208,7 @@ describe('HTTP routes', () => {
     test('POST /api/workspaces ignores fields outside the allowlist', async () => {
       const res = await request(app)
         .post('/api/workspaces')
-        .set(bearer(bob))
+        .set(await bearer(bob))
         .send({ name: 'Bob WS', ownerId: alice.id, tasks: { connect: [{ id: aliceTask.id }] } });
       expect(res.status).toBe(201);
       expect(res.body.workspace.ownerId).toBe(bob.id);
@@ -219,7 +219,7 @@ describe('HTTP routes', () => {
   });
 
   describe('request validation', () => {
-    const post = (url, user, body) => request(app).post(url).set(bearer(user)).send(body);
+    const post = async (url, user, body) => request(app).post(url).set(await bearer(user)).send(body);
 
     test('tasks: missing/oversized title and bad enums are 422, not 500', async () => {
       expect((await post('/api/tasks', alice, {})).status).toBe(422);
@@ -246,14 +246,14 @@ describe('HTTP routes', () => {
 
       const cleared = await request(app)
         .patch(`/api/tasks/${ok.body.task.id}`)
-        .set(bearer(alice))
+        .set(await bearer(alice))
         .send({ dueDate: '', status: 'in_progress' });
       expect(cleared.status).toBe(200);
       expect(cleared.body.task.dueDate).toBeNull();
     });
 
     test('tasks: a PATCH with a bad value is rejected and changes nothing', async () => {
-      const res = await request(app).patch(`/api/tasks/${aliceTask.id}`).set(bearer(alice)).send({ priority: 'nope' });
+      const res = await request(app).patch(`/api/tasks/${aliceTask.id}`).set(await bearer(alice)).send({ priority: 'nope' });
       expect(res.status).toBe(422);
       expect(res.body.errors[0]).toMatchObject({ field: 'priority' });
     });
@@ -283,13 +283,13 @@ describe('HTTP routes', () => {
 
       const reorderBad = await request(app)
         .put(`/api/pages/${pageId}/blocks/reorder`)
-        .set(bearer(alice))
+        .set(await bearer(alice))
         .send({ order: [{ id: good.body.block.id, position: -1 }] });
       expect(reorderBad.status).toBe(422);
     });
 
     test('profile: an invalid timezone or empty name is 422; a valid update works', async () => {
-      const put = (body) => request(app).put('/api/users/me').set(bearer(alice)).send(body);
+      const put = async (body) => request(app).put('/api/users/me').set(await bearer(alice)).send(body);
       expect((await put({ timezone: 'Mars/Olympus' })).status).toBe(422);
       expect((await put({ name: '' })).status).toBe(422);
       expect((await put({ timezone: 'Asia/Kolkata', name: 'Alice' })).status).toBe(200);

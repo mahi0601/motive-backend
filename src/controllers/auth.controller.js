@@ -34,41 +34,40 @@ const NATIVE_CALLBACK_URL = 'com.motive.app://oauth-callback';
 // RFC 7636 code_challenge / code_verifier alphabet and length bounds.
 const PKCE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 
-// Set the refresh cookie and return { user, accessToken, csrfToken }. The
-// access token and csrfToken are both kept in memory by the client; the
-// refresh token lives only in the httpOnly cookie. csrfToken must come back
-// as the X-CSRF-Token header on the next /refresh or /logout call — see
-// jwt.util.js#signRefreshToken for why.
-const sendAuth = (res, status, { user, accessToken, refreshToken, csrfToken }) => {
+// Set the refresh cookie and return { user, accessToken }. The access token is
+// kept in memory by the client; the refresh token lives only in the httpOnly
+// cookie (see session.service.js and sameSite.middleware.js).
+const sendAuth = (res, status, { user, accessToken, refreshToken }) => {
   tokenService.setRefreshCookie(res, refreshToken);
-  res.status(status).json({ success: true, user, accessToken, csrfToken });
+  res.status(status).json({ success: true, user, accessToken });
 };
 
-const readCsrfHeader = (req) => req.get('X-CSRF-Token');
+// Context for a new session — only what identifies the device.
+const sessionContext = (req) => ({ userAgent: req.get('user-agent') });
 
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
-  const data = await AuthService.register({ name, email, password });
+  const data = await AuthService.register({ name, email, password }, sessionContext(req));
   sendAuth(res, 201, data);
 });
 
 exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  const data = await AuthService.login({ email, password });
+  const data = await AuthService.login({ email, password }, sessionContext(req));
   sendAuth(res, 200, data);
 });
 
 // Silent refresh: read the cookie, rotate the pair, return a new access token.
 exports.refresh = asyncHandler(async (req, res) => {
   const token = tokenService.readRefreshCookie(req);
-  const data = await AuthService.refresh(token, readCsrfHeader(req));
+  const data = await AuthService.refresh(token);
   sendAuth(res, 200, data);
 });
 
 // Revoke all refresh tokens for the user, then clear the cookie.
 exports.logout = asyncHandler(async (req, res) => {
   const token = tokenService.readRefreshCookie(req);
-  await AuthService.logout(token, readCsrfHeader(req));
+  await AuthService.logout(token);
   tokenService.clearRefreshCookie(res);
   res.status(200).json({ success: true, message: 'Logged out' });
 });
@@ -183,7 +182,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   if (error || !code || !stateValid) return res.redirect(failureRedirect);
 
   try {
-    const data = await AuthService.loginWithGoogle(code);
+    const data = await AuthService.loginWithGoogle(code, sessionContext(req));
     if (isNative) {
       // A native callback with no stored challenge means the flow didn't start
       // through googleRedirect's native branch — refuse rather than mint a
@@ -199,17 +198,9 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     // Same hand-off Login.jsx/Register.jsx already use for the email/password
     // path — land on the invite page (which now sees an authenticated user)
     // instead of /dashboard when this sign-in was reached via an invite link.
-    //
-    // `csrf` rides the redirect URL, the one channel that actually reaches
-    // the frontend here — this is a top-level navigation, not an AJAX
-    // response, so there's no JSON body to put it in the way sendAuth()
-    // does for every other login path. AuthContext.jsx reads it once on
-    // load and strips it from the address bar immediately. It's inert on
-    // its own (the httpOnly refresh cookie is what actually authenticates
-    // anything), and it's replaced by a fresh one from the very next
-    // /refresh response either way — see jwt.util.js#signRefreshToken.
-    const target = inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`;
-    res.redirect(`${target}${target.includes('?') ? '&' : '?'}csrf=${data.csrfToken}`);
+    // Nothing secret rides this redirect: the session is the httpOnly cookie
+    // set above, which AuthContext's bootstrap refresh picks up on load.
+    res.redirect(inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`);
   } catch (err) {
     // logger.error only reports to Sentry when err isn't an operational
     // AppError (see config/logger.js) — loginWithGoogle already throws
@@ -230,6 +221,6 @@ exports.nativeExchange = asyncHandler(async (req, res) => {
   if (typeof codeVerifier !== 'string' || !PKCE_PATTERN.test(codeVerifier)) {
     throw AppError.badRequest('Missing or invalid code_verifier');
   }
-  const data = await AuthService.exchangeNativeCode(code, codeVerifier);
+  const data = await AuthService.exchangeNativeCode(code, codeVerifier, sessionContext(req));
   sendAuth(res, 200, data);
 });

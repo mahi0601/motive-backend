@@ -7,10 +7,9 @@
 const http = require('http');
 const { io: connect } = require('socket.io-client');
 const { initSocket, getIO } = require('../src/sockets/socket.handler');
-const { signAccessToken } = require('../src/utils/jwt.util');
 const pageService = require('../src/services/page.service');
 const prisma = require('../src/config/prisma');
-const { makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
+const { accessTokenFor, makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -26,10 +25,11 @@ describe('socket hardening (real server)', () => {
   const uncaught = [];
   const onUncaught = (err) => uncaught.push(err);
 
-  const connectAs = (user) =>
-    new Promise((resolve, reject) => {
+  const connectAs = async (user) => {
+    const token = await accessTokenFor(user);
+    return new Promise((resolve, reject) => {
       const client = connect(`http://localhost:${port}`, {
-        auth: { token: signAccessToken(user.id) },
+        auth: { token },
         transports: ['websocket'],
         forceNew: true,
       });
@@ -37,6 +37,7 @@ describe('socket hardening (real server)', () => {
       client.once('connect', () => resolve(client));
       client.once('connect_error', reject);
     });
+  };
 
   // Collects every payload of `event` the client receives from now on.
   const collect = (client, event) => {

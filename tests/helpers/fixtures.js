@@ -47,4 +47,10 @@ async function cleanupUsers(...users) {
   if (ids.length) await prisma.user.deleteMany({ where: { id: { in: ids } } });
 }
 
-module.exports = { testEmail, makeUser, makeWorkspaceWithMembers, cleanupUsers };
+// A real access token backed by a live Session row — what every authenticated
+// request and socket handshake now requires.
+async function accessTokenFor(user) {
+  return (await require('../../src/services/token.service').issueTokens(user)).accessToken;
+}
+
+module.exports = { accessTokenFor, testEmail, makeUser, makeWorkspaceWithMembers, cleanupUsers };

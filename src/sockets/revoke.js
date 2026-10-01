@@ -15,6 +15,15 @@ exports.disconnectUser = (userId) => {
   io.in(`user:${userId}`).disconnectSockets(true);
 };
 
+// Drop the connections that belong to one session (logout on one device),
+// leaving the user's other devices connected.
+exports.disconnectSession = async (userId, sid) => {
+  const io = getIO();
+  if (!io || !userId || !sid) return;
+  const sockets = await io.in(`user:${userId}`).fetchSockets();
+  sockets.filter((s) => s.data.sid === sid).forEach((s) => s.disconnect(true));
+};
+
 // After a membership change: re-check the page each of the user's sockets is
 // currently in, and pull them out of any they can no longer read. Other pages,
 // notifications and the connection itself are left alone.

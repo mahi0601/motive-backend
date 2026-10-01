@@ -6,6 +6,7 @@ const config = require('../config/env');
 const { verifyToken, signResetToken } = require('../utils/jwt.util');
 const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
+const sessionService = require('./session.service');
 const emailService = require('./email.service');
 const logger = require('../config/logger');
 
@@ -25,22 +26,22 @@ function logTokenFailure(event, err, context) {
 
 // Password is globally omitted by the Prisma client (see config/prisma.js),
 // so any `user` object here is already safe to send to the client as-is.
-const result = (user) => ({
+const result = async (user, ctx) => ({
   user,
-  ...tokenService.issueTokens(user),
+  ...(await tokenService.issueTokens(user, ctx)),
 });
 
-exports.register = async ({ name, email, password }) => {
+exports.register = async ({ name, email, password }, ctx) => {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw AppError.conflict('Email already in use');
 
   const user = await prisma.user.create({
     data: { name, email, password: await hashPassword(password) },
   });
-  return result(user);
+  return result(user, ctx);
 };
 
-exports.login = async ({ email, password }) => {
+exports.login = async ({ email, password }, ctx) => {
   // Password is globally omitted — opt back in just for this check.
   const user = await prisma.user.findUnique({ where: { email }, omit: { password: false } });
   // No password set → a Google-only account; there's nothing to compare
@@ -50,7 +51,7 @@ exports.login = async ({ email, password }) => {
   if (!valid) throw AppError.unauthorized('Invalid credentials');
 
   delete user.password;
-  return result(user);
+  return result(user, ctx);
 };
 
 // Exchanges a Google OAuth `code` (from the /api/auth/google/callback
@@ -60,7 +61,7 @@ exports.login = async ({ email, password }) => {
 // email is the identity, not the login method. An existing password-based
 // account signing in with Google for the first time just gets `googleId`
 // attached; no separate "Google account" is created for the same email.
-exports.loginWithGoogle = async (code) => {
+exports.loginWithGoogle = async (code, ctx) => {
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -122,10 +123,11 @@ exports.loginWithGoogle = async (code) => {
       where: { id: user.id },
       data: { googleId: profile.id, password: null, tokenVersion: { increment: 1 } },
     });
+    await sessionService.revokeAllForUser(user.id);
     require('../sockets/revoke').disconnectUser(user.id);
   }
 
-  return result(user);
+  return result(user, ctx);
 };
 
 // Native (Capacitor Android) OAuth hand-off — see the NativeExchangeCode
@@ -160,7 +162,7 @@ const verifyPkce = (verifier, challenge) => {
 // The PKCE check runs AFTER that delete on purpose: a wrong verifier burns
 // the code, so an interceptor gets exactly one guess and the legitimate app's
 // own (correct) attempt then fails closed rather than racing the attacker.
-exports.exchangeNativeCode = async (code, codeVerifier) => {
+exports.exchangeNativeCode = async (code, codeVerifier, ctx) => {
   let record;
   try {
     record = await prisma.nativeExchangeCode.delete({ where: { code } });
@@ -178,14 +180,16 @@ exports.exchangeNativeCode = async (code, codeVerifier) => {
 
   const user = await prisma.user.findUnique({ where: { id: record.userId } });
   if (!user) throw AppError.unauthorized('User no longer exists');
-  return result(user);
+  return result(user, ctx);
 };
 
-// Validate a refresh token and rotate it (issue a fresh pair). `csrfToken` is
-// the X-CSRF-Token header — see jwt.util.js#signRefreshToken for the full
-// rationale. Checked before the DB lookup, since a request that's going to
-// be rejected on CSRF grounds shouldn't spend a query first.
-exports.refresh = async (refreshToken, csrfToken) => {
+// Validate a refresh token and rotate it (new refresh token, new access
+// token). Everything that decides validity lives in session.service.rotate:
+// the session must exist, be unexpired and unrevoked, match the user's
+// tokenVersion, and the token must be the current (or just-previous)
+// generation. There is no per-request nonce — the cross-site defence for this
+// endpoint is sameSite.middleware.js (custom header + Origin allowlist).
+exports.refresh = async (refreshToken) => {
   if (!refreshToken) throw AppError.unauthorized('No refresh token');
 
   let payload;
@@ -197,52 +201,40 @@ exports.refresh = async (refreshToken, csrfToken) => {
   }
   if (payload.type !== 'refresh') throw AppError.unauthorized('Invalid token type');
 
-  if (!payload.csrf || !csrfToken || csrfToken !== payload.csrf) {
-    throw AppError.forbidden('Invalid CSRF token');
-  }
-
-  const user = await prisma.user.findUnique({ where: { id: payload.id } });
-  if (!user) throw AppError.unauthorized('User no longer exists');
-
-  // tokenVersion mismatch → token was revoked (logout / password change elsewhere).
-  if (payload.ver !== user.tokenVersion) throw AppError.unauthorized('Refresh token revoked');
-
-  return result(user);
+  const { user, sid, gen } = await sessionService.rotate(payload);
+  return {
+    user,
+    ...(await tokenService.issueTokens(user, { session: { id: sid }, gen })),
+  };
 };
 
 // Revoke ALL refresh tokens for the user by bumping their version.
 exports.revokeAll = async (userId) => {
   if (!userId) return;
   await prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+  await sessionService.revokeAllForUser(userId);
   require('../sockets/revoke').disconnectUser(userId);
 };
 
-// Decode the refresh cookie (if any) just enough to revoke that user's
-// sessions — an expired/invalid/missing cookie is fine, logout still
-// succeeds either way, it just has nothing to revoke. `csrfToken` is the
-// X-CSRF-Token header — see jwt.util.js#signRefreshToken. A mismatch is
-// treated the same as "nothing to revoke" rather than a thrown error,
-// matching this function's existing lenient shape, but it's still worth a
-// log line: unlike an expired cookie, it means someone tried to force a
-// logout via a cross-site request without knowing the nonce, which the
-// legitimate frontend always would.
-exports.logout = async (refreshToken, csrfToken) => {
+// Ends the session named by the refresh cookie (this browser/device only) —
+// an expired/invalid/missing cookie is fine, logout still succeeds either way,
+// it just has nothing to revoke. Cross-site forged calls are stopped before
+// this runs, by sameSite.middleware.js.
+exports.logout = async (refreshToken) => {
   if (!refreshToken) return;
   try {
     const payload = verifyToken(refreshToken);
-    // Previously missing entirely — unlike refresh/resetPassword, this
-    // never checked `type`, so an access token or password-reset token
-    // planted in the same cookie slot would also successfully revoke every
-    // session for that `id`.
+    // An access token or password-reset token planted in the cookie slot must
+    // not be able to end sessions.
     if (payload.type !== 'refresh') {
       logger.warn('Logout called with a non-refresh token', { type: payload.type });
       return;
     }
-    if (!payload.csrf || !csrfToken || csrfToken !== payload.csrf) {
-      logger.warn('Logout blocked — CSRF token mismatch', { userId: payload.id });
-      return;
+    // Only this browser's session ends; other devices stay signed in.
+    if (typeof payload.sid === 'string') {
+      await sessionService.revoke(payload.sid);
+      await require('../sockets/revoke').disconnectSession(payload.id, payload.sid);
     }
-    await exports.revokeAll(payload.id);
   } catch (err) {
     // Nothing to revoke either way — logout still succeeds. Logged only for
     // the audit trail this had zero trace of before.
@@ -290,5 +282,6 @@ exports.resetPassword = async (token, newPassword) => {
     where: { id: user.id },
     data: { password: await hashPassword(newPassword), tokenVersion: { increment: 1 } },
   });
+  await sessionService.revokeAllForUser(user.id);
   require('../sockets/revoke').disconnectUser(user.id);
 };

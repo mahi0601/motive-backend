@@ -2,6 +2,7 @@ const { verifyToken } = require('../utils/jwt.util');
 const config = require('../config/env');
 const logger = require('../config/logger');
 const blockService = require('../services/block.service');
+const sessionService = require('../services/session.service');
 
 let ioInstance;
 
@@ -42,11 +43,15 @@ function safeOn(socket, event, handler) {
 // Exported (rather than only registered via `io.use()` below) so it can be
 // unit-tested against a plain `{ handshake, data }` stub without spinning
 // up a real socket.io server/client pair.
-function handshakeAuth(socket, next) {
+async function handshakeAuth(socket, next) {
   try {
     const payload = verifyToken(socket.handshake.auth?.token);
     if (payload.type !== 'access') throw new Error('not an access token');
+    // Must belong to a live session of the current version — a logged-out or
+    // revoked session cannot open a new socket with an unexpired token.
+    await sessionService.assertAccessPayload(payload);
     socket.data.userId = payload.id;
+    socket.data.sid = payload.sid;
     next();
   } catch (err) {
     logger.warn('Socket handshake rejected — invalid or missing token', { err: err.message });

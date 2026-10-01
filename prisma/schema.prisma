@@ -104,6 +104,7 @@ model User {
   notifications   Notification[]
   activityLogs    ActivityLog[]
   templates       Template[]
+  sessions        Session[]
 }
 
 model Workspace {
@@ -351,6 +352,35 @@ model NativeExchangeCode {
   codeChallenge String
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+// One row per login (browser, device, app). The refresh token carries this id
+// plus `gen`, a counter bumped on every rotation:
+//   - token gen == row gen        → valid; rotate (gen + 1)
+//   - token gen == row gen - 1    → the previous token, replayed within a short
+//                                   grace window (two tabs refreshing at once):
+//                                   answer with the current generation, no bump
+//   - anything older, or after the window → a stolen/replayed token: the whole
+//                                   session is revoked
+// Logout revokes one session; tokenVersion on User still means "log out
+// everywhere". Access tokens carry `sid` and are checked against this row, so
+// a revoked session stops working immediately instead of at token expiry.
+model Session {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gen               Int       @default(0)
+  prevGenValidUntil DateTime?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  // sha256 prefix of the User-Agent — enough to tell sessions apart in a
+  // future "your devices" list without storing the raw string.
+  uaHash            String?
+  createdAt         DateTime  @default(now())
+  lastUsedAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // Idempotency ledger for Stripe webhooks — Stripe redelivers events on any

@@ -5,12 +5,11 @@
 const http = require('http');
 const { io: connect } = require('socket.io-client');
 const { initSocket, getIO } = require('../src/sockets/socket.handler');
-const { signAccessToken } = require('../src/utils/jwt.util');
 const pageService = require('../src/services/page.service');
 const workspaceService = require('../src/services/workspace.service');
 const authService = require('../src/services/auth.service');
 const prisma = require('../src/config/prisma');
-const { makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
+const { accessTokenFor, makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -18,13 +17,15 @@ describe('socket revocation (real server)', () => {
   let server, port, owner, member, workspace, page;
   const clients = [];
 
-  const connectAs = (user) =>
-    new Promise((resolve, reject) => {
-      const c = connect(`http://localhost:${port}`, { auth: { token: signAccessToken(user.id) }, transports: ['websocket'], forceNew: true, reconnection: false });
+  const connectAs = async (user) => {
+    const token = await accessTokenFor(user);
+    return new Promise((resolve, reject) => {
+      const c = connect(`http://localhost:${port}`, { auth: { token }, transports: ['websocket'], forceNew: true, reconnection: false });
       clients.push(c);
       c.once('connect', () => resolve(c));
       c.once('connect_error', reject);
     });
+  };
 
   beforeEach(async () => {
     owner = await makeUser('revOwner');
