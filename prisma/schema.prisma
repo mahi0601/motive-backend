@@ -67,6 +67,12 @@ model User {
   // Set the first time a user signs in with Google — also used to link an
   // existing password-based account by matching email on first Google login.
   googleId         String?  @unique
+  // When this account proved it controls `email` (Google sign-in, completing a
+  // password reset, accepting an invite sent to it, or clicking the emailed
+  // verification link). Null = unproven. Sign-in is never blocked on it; it
+  // gates things that can be abused from a throwaway account (sending invites)
+  // and decides whether linking Google may keep an existing password.
+  emailVerifiedAt  DateTime?
   avatar           String   @default("")
   // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
   // endpoint's week/month/quarter ranges in the user's own day, instead of

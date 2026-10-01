@@ -8,6 +8,7 @@ const config = require('../config/env');
 // Free tier: owner + 1 invited teammate (2 members total). Motive Pro
 // removes the cap — the first thing `isPro` actually gates.
 const FREE_MEMBER_LIMIT = 2;
+const DAILY_INVITE_LIMIT = 20;
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -198,10 +199,31 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   const ws = await assertOwner(workspaceId, requesterId);
   const normalizedEmail = email.toLowerCase();
 
-  const requester = await prisma.user.findUnique({ where: { id: requesterId }, select: { name: true, isPro: true } });
+  const requester = await prisma.user.findUnique({
+    where: { id: requesterId },
+    select: { name: true, isPro: true, emailVerifiedAt: true },
+  });
+  // Invites send email from Motive's address to arbitrary people, so they are
+  // the thing a throwaway account would abuse; require a proven address first.
+  if (!requester.emailVerifiedAt) {
+    throw AppError.forbidden('Verify your email address before inviting people — check your inbox for the confirmation link.');
+  }
+  const sentToday = await prisma.workspaceInvite.count({
+    where: { invitedById: requesterId, updatedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+  });
+  if (sentToday >= DAILY_INVITE_LIMIT) {
+    throw new AppError('You have reached the daily invite limit — try again tomorrow.', 429);
+  }
   if (!requester.isPro) {
-    const memberCount = await prisma.workspaceMember.count({ where: { workspaceId } });
-    if (memberCount >= FREE_MEMBER_LIMIT) {
+    // Pending invites hold a seat too, or a free workspace could queue up any
+    // number of invites and only hit the limit as they are accepted.
+    const [memberCount, pendingElsewhere] = await Promise.all([
+      prisma.workspaceMember.count({ where: { workspaceId } }),
+      prisma.workspaceInvite.count({
+        where: { workspaceId, status: 'pending', expiresAt: { gt: new Date() }, email: { not: normalizedEmail } },
+      }),
+    ]);
+    if (memberCount + pendingElsewhere >= FREE_MEMBER_LIMIT) {
       throw AppError.paymentRequired(
         `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Motive Pro to invite more.`
       );
@@ -315,6 +337,20 @@ const findInviteForResponse = async (rawToken, userEmail) => {
 // null when the invite was already fulfilled (nothing new to tell anyone).
 exports.acceptInvite = async (rawToken, userId, userEmail) => {
   const invite = await findInviteForResponse(rawToken, userEmail);
+
+  // The seat limit is checked again here, not only when the invite was sent: the
+  // workspace may have filled up, or the owner's Pro may have ended, since.
+  const [inviteWorkspace, existingMembership] = await Promise.all([
+    prisma.workspace.findUnique({ where: { id: invite.workspaceId }, select: { owner: { select: { isPro: true } } } }),
+    prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } } }),
+  ]);
+  if (!existingMembership && inviteWorkspace && !inviteWorkspace.owner.isPro) {
+    const memberCount = await prisma.workspaceMember.count({ where: { workspaceId: invite.workspaceId } });
+    if (memberCount >= FREE_MEMBER_LIMIT) {
+      throw AppError.paymentRequired('This workspace has reached its member limit — ask its owner to upgrade to Motive Pro.');
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const alreadyMember = await tx.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } },
@@ -323,6 +359,8 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
       await tx.workspaceMember.create({ data: { workspaceId: invite.workspaceId, userId, role: invite.role } });
     }
     await tx.workspaceInvite.update({ where: { id: invite.id }, data: { status: 'accepted' } });
+    // The token only went to this address, so holding it proves the address.
+    await tx.user.updateMany({ where: { id: userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } });
 
     const [workspace, accepter] = await Promise.all([
       tx.workspace.findUnique({ where: { id: invite.workspaceId } }),

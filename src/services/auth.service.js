@@ -3,7 +3,7 @@ const validator = require('validator');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const config = require('../config/env');
-const { verifyToken, signResetToken } = require('../utils/jwt.util');
+const { verifyToken, signResetToken, signVerifyToken } = require('../utils/jwt.util');
 const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
 const sessionService = require('./session.service');
@@ -32,6 +32,45 @@ const result = async (user, ctx) => ({
   ...(await tokenService.issueTokens(user, ctx)),
 });
 
+// Proof that an account controls its address. Sent best-effort: a mail outage
+// must not stop someone registering (they can ask for another link).
+const sendVerificationEmail = async (user) => {
+  const url = `${config.frontendUrl}/verify-email?token=${signVerifyToken(user.id, user.email)}`;
+  await emailService.sendEmail({
+    to: user.email,
+    subject: 'Confirm your email for Motive',
+    html: `<p>Confirm this is your email address so you can invite teammates to Motive.</p>
+<p><a href="${url}">Confirm my email</a>. This link expires in 24 hours.</p>
+<p>If you didn't create a Motive account, you can safely ignore this email.</p>`,
+  });
+};
+
+exports.verifyEmail = async (token) => {
+  let payload;
+  try {
+    payload = verifyToken(token);
+  } catch (err) {
+    logTokenFailure('Email verification token rejected', err);
+    throw AppError.badRequest('This confirmation link is invalid or has expired.');
+  }
+  if (payload.type !== 'verify') throw AppError.badRequest('This confirmation link is invalid or has expired.');
+
+  const user = await prisma.user.findUnique({ where: { id: payload.id } });
+  if (!user || user.email.toLowerCase() !== payload.email) {
+    throw AppError.badRequest('This confirmation link is invalid or has expired.');
+  }
+  if (!user.emailVerifiedAt) {
+    await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+    await audit.record({ type: 'email_verified', actorId: user.id, meta: { method: 'link' } });
+  }
+};
+
+exports.resendVerification = async (userId) => {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.emailVerifiedAt) return;
+  await sendVerificationEmail(user);
+};
+
 exports.register = async ({ name, email, password }, ctx) => {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw AppError.conflict('Email already in use');
@@ -39,6 +78,7 @@ exports.register = async ({ name, email, password }, ctx) => {
   const user = await prisma.user.create({
     data: { name, email, password: await hashPassword(password) },
   });
+  await sendVerificationEmail(user);
   return result(user, ctx);
 };
 
@@ -112,29 +152,41 @@ exports.loginWithGoogle = async (code, ctx) => {
   }
 
   if (!user) {
+    // Google only returns addresses it has verified (checked above), so this
+    // account has proven its email from the start.
     user = await prisma.user.create({
       data: {
         name: profile.name || profile.email.split('@')[0],
         email: validator.normalizeEmail(profile.email) || profile.email,
         googleId: profile.id,
         avatar: profile.picture || '',
+        emailVerifiedAt: new Date(),
       },
     });
   } else if (!user.googleId) {
-    // Linking to an account that already existed. Anyone can register an
-    // address they don't own, with a password they chose; the real owner then
-    // proves ownership through Google. If that password survived, the person
-    // who registered first would keep a working login into the owner's
-    // account. So the password is removed (the owner can set a new one with
-    // "forgot password") and tokenVersion is bumped to kill any session or
-    // refresh token already issued for it.
+    // Linking to an account that already existed. If that account had already
+    // proven its address, whoever set its password is its owner, and nothing
+    // changes but the link. If it had NOT, anyone could have registered an
+    // address they do not own with a password they chose, and the real owner is
+    // only now proving ownership through Google — so that password is removed
+    // (the owner can set a new one with "forgot password") and tokenVersion is
+    // bumped to kill any session or refresh token already issued for it.
+    const wasVerified = !!user.emailVerifiedAt;
     user = await prisma.user.update({
       where: { id: user.id },
-      data: { googleId: profile.id, password: null, tokenVersion: { increment: 1 } },
+      data: {
+        googleId: profile.id,
+        emailVerifiedAt: user.emailVerifiedAt || new Date(),
+        ...(wasVerified ? {} : { password: null, tokenVersion: { increment: 1 } }),
+      },
     });
-    await sessionService.revokeAllForUser(user.id);
-    require('../sockets/revoke').disconnectUser(user.id);
-    await audit.record({ type: 'google_linked', actorId: user.id, meta: { passwordRemoved: true } });
+    if (!wasVerified) {
+      await sessionService.revokeAllForUser(user.id);
+      require('../sockets/revoke').disconnectUser(user.id);
+    }
+    await audit.record({ type: 'google_linked', actorId: user.id, meta: { passwordRemoved: !wasVerified } });
+  } else if (!user.emailVerifiedAt) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
   }
 
   await audit.record({ type: 'login_success', actorId: user.id, meta: { method: 'google' } });
@@ -292,7 +344,8 @@ exports.resetPassword = async (token, newPassword) => {
   // outstanding session) is invalidated the moment the password changes.
   await prisma.user.update({
     where: { id: user.id },
-    data: { password: await hashPassword(newPassword), tokenVersion: { increment: 1 } },
+    // Completing a reset proves the address: the link only went to that inbox.
+    data: { password: await hashPassword(newPassword), tokenVersion: { increment: 1 }, emailVerifiedAt: user.emailVerifiedAt || new Date() },
   });
   await sessionService.revokeAllForUser(user.id);
   require('../sockets/revoke').disconnectUser(user.id);

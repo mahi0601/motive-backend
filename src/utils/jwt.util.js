@@ -31,5 +31,13 @@ exports.signResetToken = (userId, tokenVersion) =>
     expiresIn: '30m',
   });
 
+// Email-verification link. Bound to the address it was sent to, so it cannot
+// verify a different address if the account's email ever changes, and it is
+// useless for anything else (every consumer checks `type`).
+exports.signVerifyToken = (userId, email) =>
+  jwt.sign({ id: userId, type: 'verify', email: String(email).toLowerCase() }, config.jwt.secret, {
+    expiresIn: '24h',
+  });
+
 // Throws on invalid/expired tokens; the error middleware maps it to 401.
 exports.verifyToken = (token) => jwt.verify(token, config.jwt.secret);

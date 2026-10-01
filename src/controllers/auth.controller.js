@@ -72,6 +72,16 @@ exports.logout = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, message: 'Logged out' });
 });
 
+exports.verifyEmail = asyncHandler(async (req, res) => {
+  await AuthService.verifyEmail(req.body.token);
+  res.status(200).json({ success: true, message: 'Email confirmed.' });
+});
+
+exports.resendVerification = asyncHandler(async (req, res) => {
+  await AuthService.resendVerification(req.user.id);
+  res.status(200).json({ success: true, message: 'If your email is not confirmed yet, a new link is on its way.' });
+});
+
 // Always the same generic response, whether or not the email is registered —
 // otherwise this endpoint would let anyone enumerate which emails have accounts.
 exports.forgotPassword = asyncHandler(async (req, res) => {
