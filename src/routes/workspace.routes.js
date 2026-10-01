@@ -35,6 +35,10 @@ router.delete('/:id/leave', WorkspaceController.leaveWorkspace);
 // Owner-only public status link — POST enables or rotates, DELETE turns it off.
 router.post('/:id/share', WorkspaceController.enableShare);
 router.delete('/:id/share', WorkspaceController.disableShare);
+// Owner-only inbox for what clients send from the public page.
+router.get('/:id/feedback', WorkspaceController.listFeedback);
+router.patch('/:id/feedback/:feedbackId/read', WorkspaceController.markFeedbackRead);
+router.delete('/:id/feedback/:feedbackId', WorkspaceController.deleteFeedback);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
 

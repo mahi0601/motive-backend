@@ -56,13 +56,14 @@ describe('status page details', () => {
       milestone: { title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z' },
       accent: 'violet',
       hideBranding: false,
+      allowFeedback: false,
     });
   });
 
   test('an empty page has sensible nulls and the default accent', async () => {
     const fresh = await makeWorkspaceWithMembers(owner);
     const view = await publicView(fresh, owner);
-    expect(view.body.status.page).toEqual({ headline: null, summary: null, milestone: null, accent: 'teal', hideBranding: false });
+    expect(view.body.status.page).toEqual({ headline: null, summary: null, milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false });
   });
 
   test('sending an empty string clears a field', async () => {

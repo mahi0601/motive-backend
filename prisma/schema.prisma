@@ -141,10 +141,34 @@ model Workspace {
   milestoneDate      DateTime?
   statusAccent       String   @default("teal")
   statusHideBranding Boolean  @default(false)
+  // Whether the public page offers the "approve / request changes / comment"
+  // form. Off by default: turning it on opens an unauthenticated write
+  // endpoint, so the owner opts in.
+  statusAllowFeedback Boolean @default(false)
+  feedback           ClientFeedback[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([ownerId])
+}
+
+// Something a client sent from the public status page (see feedback.service.js).
+// The sender is whoever holds the link: `authorName` is whatever they typed and
+// is NOT verified. `milestoneTitle` is a snapshot of the milestone at the time,
+// so the history still makes sense after the owner edits it. Plain text only.
+// Pruned after a year by jobs/cleanup.js.
+model ClientFeedback {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind           String // 'comment' | 'approve' | 'changes'
+  authorName     String
+  message        String    @default("")
+  milestoneTitle String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
 }
 
 // Mongo's embedded `members[]` subdocument becomes a join table.

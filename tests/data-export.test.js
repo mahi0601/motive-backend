@@ -32,6 +32,24 @@ describe('GET /api/users/me/export', () => {
 
   const get = async (user) => request(app).get('/api/users/me/export').set('Authorization', `Bearer ${await accessTokenFor(user)}`);
 
+  test('includes what clients sent to workspaces the user owns, and not feedback on someone else\'s', async () => {
+    // A separate owner: the export is limited to one per hour per account, and
+    // the tests above already used alice's.
+    const dana = await makeUser('exportDana');
+    const erin = await makeUser('exportErin');
+    try {
+      const danaWs = await makeWorkspaceWithMembers(dana);
+      const erinWs = await makeWorkspaceWithMembers(erin);
+      await prisma.clientFeedback.create({ data: { workspaceId: danaWs.id, kind: 'comment', authorName: 'Client Cat', message: 'looks great' } });
+      await prisma.clientFeedback.create({ data: { workspaceId: erinWs.id, kind: 'comment', authorName: 'Other Client', message: 'erin only' } });
+      const mine = (await get(dana)).body.clientFeedback;
+      expect(mine.map((f) => f.message)).toEqual(['looks great']);
+      expect(JSON.stringify(mine)).not.toContain('erin only');
+    } finally {
+      await cleanupUsers(dana, erin);
+    }
+  });
+
   test('requires authentication', async () => {
     expect((await request(app).get('/api/users/me/export')).status).toBe(401);
   });
