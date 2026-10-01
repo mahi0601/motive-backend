@@ -1,7 +1,7 @@
 // Regression coverage for the app's actual security boundary — register/
 // login/refresh/logout and the tokenVersion-based revocation that makes
 // "log out everywhere" and password-reset invalidation actually work. None
-// of this was under test before (see PLAN's regression-debt list, item 2).
+// of this was under test before.
 // Real Prisma, real jsonwebtoken signing — no mocking needed, since nothing
 // here calls an external service.
 const prisma = require('../src/config/prisma');

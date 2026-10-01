@@ -38,7 +38,7 @@ const safeInviteFields = (invite) => ({
 // Inline styles only — email clients don't load stylesheets. Kept to a
 // single centered card rather than a full bulletproof-email table layout;
 // this is a step up from the plain unstyled <p> tags password-reset still
-// uses (out of scope here — see PLAN), not an attempt at pixel parity across
+// uses (out of scope here), not an attempt at pixel parity across
 // every mail client.
 const sendInviteEmail = async (invite, workspace, inviterName, rawToken) => {
   const acceptUrl = `${config.frontendUrl}/invite/${rawToken}`;
@@ -102,7 +102,7 @@ exports.create = (data, userId) =>
   });
 
 // Role sufficiency, not just membership — the foundation the B2B2C
-// permission model builds on (see PLAN "Total scope" §A). `owner` and
+// permission model builds on. `owner` and
 // `editor` can write; only `owner`/`editor`/`viewer` (i.e. any member) can
 // read. Ranked so a call site never has to enumerate which roles satisfy
 // which need — it just states what it requires.

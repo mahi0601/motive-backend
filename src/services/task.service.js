@@ -5,7 +5,7 @@ const workspaceService = require('./workspace.service');
 
 // Paginated, indexed read — scales to large task counts per user.
 //
-// `workspaceId` is opt-in and additive (see PLAN "Total scope" §A): omitted,
+// `workspaceId` is opt-in and additive: omitted,
 // this is byte-for-byte the same `WHERE userId = ?` every existing solo
 // caller already gets — that's deliberate, it's what "regression on the
 // existing solo product" in the plan's verification section means. Only
@@ -38,7 +38,7 @@ exports.getAll = async (userId, { skip, limit, workspaceId } = {}) => {
 // Was `assertOwner` (owner-only, full stop) — comment/subtask/file services
 // (see comment.service.js/subtask.service.js/file.service.js) all built on
 // that, from before a task could belong to a shared workspace at all. Once
-// Task gained workspaceId (PLAN "Total scope" §A), that became a stale
+// Task gained workspaceId, that became a stale
 // assumption baked into three other services, not just this one — an
 // editor who can now edit a shared task still couldn't comment on it, add a
 // subtask, or attach a file to it. Same owner-or-role check as everywhere
@@ -185,8 +185,8 @@ exports.create = async (data, userId) => {
 };
 
 // Owner, or a workspace editor with write access to the task's workspace
-// (see PLAN "Total scope" §A — "every Task query/mutation" routes through
-// the same check Page/Block writes now do). Access is verified with an
+// (every Task query/mutation routes through the same check Page/Block
+// writes do). Access is verified with an
 // explicit fetch-then-check rather than folding `userId` into the
 // `updateMany` WHERE clause, because that clause can no longer express "is
 // this caller allowed" — a non-owner editor's update would otherwise just

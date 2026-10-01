@@ -3,9 +3,9 @@ const AppError = require('../utils/AppError');
 const workspaceService = require('./workspace.service');
 
 // Role-aware access check on the block's *page* — a block has no owner or
-// workspace of its own, it inherits both from `Page` (see PLAN "Total
-// scope" §A: "every Block mutation" routes through the same owner-or-role
-// check as Page writes now do). 404s rather than 403s, matching
+// workspace of its own, it inherits both from `Page`, so every Block mutation
+// routes through the same owner-or-role check as Page writes. 404s rather
+// than 403s, matching
 // page.service.js#assertAccess — a non-member shouldn't learn the page
 // exists at all.
 async function assertPageAccess(pageId, userId, need = 'read') {

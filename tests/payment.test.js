@@ -1,4 +1,4 @@
-// Regression coverage for real-money logic (PLAN's regression-debt item 1).
+// Regression coverage for real-money logic.
 // `handleWebhookEvent`'s idempotency ledger is the part actually worth
 // protecting and needs zero mocking — it operates on an already-parsed
 // event object, never touching the Stripe SDK itself, so it runs against

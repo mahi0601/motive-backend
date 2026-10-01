@@ -33,8 +33,7 @@ async function assertAccess(id, userId, need = 'read') {
 }
 
 // Read access is owner OR any workspace member with at least `viewer` —
-// broadened for presence/cursors and now the client-portal read view (see
-// PLAN "Total scope" §A/C).
+// broadened for presence/cursors and now the client-portal read view.
 exports.getById = async (id, userId) => assertAccess(id, userId, 'read');
 
 exports.create = async (data, userId) => {

@@ -1,5 +1,5 @@
 // Promotes three manual `node -e` verifications done by hand earlier this
-// session into permanent tests (PLAN's regression-debt item 4) — each of
+// session into permanent tests — each of
 // these caught or confirmed a real bug (the original week-start/timezone
 // bug this endpoint replaced, and the at-risk boundary correctness) and
 // deserves to be more than tribal knowledge living only in a conversation.

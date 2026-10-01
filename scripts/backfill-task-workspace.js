@@ -11,8 +11,7 @@
 //      own owner, on every one of that user's tasks still missing a
 //      workspaceId. A pre-existing task's owner is trivially its own
 //      assignee — this is what makes a solo user's board behave identically
-//      before and after (see PLAN's "Regression on the existing solo
-//      product" verification requirement).
+//      before and after (no regression for existing solo users).
 //
 // Run with: node scripts/backfill-task-workspace.js
 const prisma = require('../src/config/prisma');

@@ -1,5 +1,5 @@
 // Permission-matrix tests for the workspace-scoped authorization layer added
-// alongside Task.workspaceId/assigneeId (see PLAN "Total scope" §A). This is
+// alongside Task.workspaceId/assigneeId. This is
 // the highest-risk piece of that workstream — a missed check here is a
 // cross-client data leak, not a wrong dashboard number — so per the plan
 // these are written before the workstream is considered done, not after.

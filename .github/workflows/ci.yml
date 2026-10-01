@@ -12,9 +12,8 @@ jobs:
     # A throwaway Postgres for the lifetime of this job only — not the dev
     # database, no Neon/account access needed. Gives `prisma migrate deploy`
     # and `npm test` a real database to run against instead of just parsing
-    # the schema (see PLAN's "Execution plan" — this replaces an earlier,
-    # since-corrected idea of using a Neon branch here, which would have
-    # needed dashboard access neither the assistant nor CI has).
+    # the schema. (A Neon branch was considered and rejected: it would need
+    # dashboard access that CI doesn't have.)
     services:
       postgres:
         image: postgres:16
