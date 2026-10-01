@@ -3,6 +3,7 @@ const AppError = require('../utils/AppError');
 const activityLog = require('./activityLog.service');
 const workspaceService = require('./workspace.service');
 const storageService = require('./storage.service');
+const analytics = require('./analytics.service');
 const { escapeLike } = require('../utils/like');
 
 // Paginated, indexed read — scales to large task counts per user.
@@ -199,14 +200,17 @@ exports.create = async (data, userId) => {
 
   // count+create wrapped in a Serializable transaction so two concurrent
   // creates can't both read the same count and collide on `position`.
+  let isFirstTask = false;
   const task = await prisma.$transaction(
     async (tx) => {
       const count = await tx.task.count({ where: { userId } });
+      isFirstTask = count === 0;
       return tx.task.create({ data: { ...patch, userId, workspaceId, assigneeId, position: count } });
     },
     { isolationLevel: 'Serializable' }
   );
   activityLog.log('created', userId, { taskId: task.id, description: `Created "${task.title}"` });
+  if (isFirstTask) await analytics.track('first_task_created', { userId, workspaceId });
   return task;
 };
 

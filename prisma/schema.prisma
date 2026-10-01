@@ -145,6 +145,10 @@ model Workspace {
   // form. Off by default: turning it on opens an unauthenticated write
   // endpoint, so the owner opts in.
   statusAllowFeedback Boolean @default(false)
+  // Bumped whenever the milestone's name or date changes. A client approval is
+  // tied to the version it was given for, so changing the milestone starts a
+  // clean slate (and reusing an old name later cannot revive an old approval).
+  milestoneVersion   Int      @default(0)
   feedback           ClientFeedback[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -165,10 +169,29 @@ model ClientFeedback {
   authorName     String
   message        String    @default("")
   milestoneTitle String?
+  // Which version of the milestone this was about (see Workspace.milestoneVersion).
+  milestoneVersion Int     @default(0)
   readAt         DateTime?
   createdAt      DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
+}
+
+// A small first-party product-analytics event: a name from a fixed allowlist
+// (services/analytics.service.js) plus ids. Never an email, title, token or ip.
+// `visitor` exists only on status-page views: a hash that rotates daily, so
+// unique viewers can be counted without being identifiable or trackable across
+// days. No foreign keys, so it survives deletions; pruned after 400 days.
+model ProductEvent {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  name        String
+  userId      String?
+  workspaceId String?
+  visitor     String?
+
+  @@index([name, createdAt])
+  @@index([workspaceId])
 }
 
 // Mongo's embedded `members[]` subdocument becomes a join table.

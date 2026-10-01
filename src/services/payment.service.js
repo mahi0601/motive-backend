@@ -3,6 +3,7 @@ const config = require('../config/env');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
+const analytics = require('./analytics.service');
 
 // Lazily constructed — throws only when a payment route is actually hit without
 // keys configured, instead of crashing the whole app at boot.
@@ -163,6 +164,7 @@ const applySubscription = async (subscription, eventType, knownUserId) => {
   const nextIsPro = user.proLifetime || (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status));
   if (nextIsPro !== user.isPro) {
     await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: nextIsPro, status } });
+    if (nextIsPro) await analytics.track('upgraded', { userId: user.id });
   }
   await prisma.user.update({
     where: { id: user.id },
