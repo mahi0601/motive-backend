@@ -56,6 +56,9 @@ describe('cleanup job', () => {
     const sessRevokedOld = await prisma.session.create({ data: { userId: user.id, expiresAt: daysAgo(-20), revokedAt: daysAgo(10) } });
     const sessLive = await prisma.session.create({ data: { userId: user.id, expiresAt: daysAgo(-20) } });
 
+    const fbOld = await prisma.clientFeedback.create({ data: { workspaceId: ws.id, kind: 'comment', authorName: 'a', message: 'old', createdAt: daysAgo(400) } });
+    const fbNew = await prisma.clientFeedback.create({ data: { workspaceId: ws.id, kind: 'comment', authorName: 'a', message: 'new', createdAt: daysAgo(30) } });
+
     const counts = await runCleanup();
 
     const exists = async (model, where) => (await prisma[model].count({ where })) === 1;
@@ -76,6 +79,8 @@ describe('cleanup job', () => {
     expect(await exists('session', { id: sessOld.id })).toBe(false);
     expect(await exists('session', { id: sessRevokedOld.id })).toBe(false);
     expect(await exists('session', { id: sessLive.id })).toBe(true);
+    expect(await exists('clientFeedback', { id: fbOld.id })).toBe(false);
+    expect(await exists('clientFeedback', { id: fbNew.id })).toBe(true);
     expect(counts.nativeExchangeCodes).toBeGreaterThanOrEqual(1);
   });
 

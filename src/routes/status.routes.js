@@ -15,4 +15,16 @@ const statusLimiter = rateLimit({
 
 router.get('/:token', statusLimiter, StatusController.getByToken);
 
+// The only unauthenticated write: much tighter than reading, because each post
+// stores a row and notifies the owner. Per client ip; the service adds a
+// per-workspace daily cap.
+const feedbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.FEEDBACK_RATE_MAX, 10) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many messages, please try again later.' },
+});
+router.post('/:token/feedback', feedbackLimiter, StatusController.submitFeedback);
+
 module.exports = router;

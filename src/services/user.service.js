@@ -38,7 +38,7 @@ exports.exportData = async (userId) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { password: false } });
   if (!user) throw AppError.notFound('User not found');
 
-  const [workspaces, tasks, pages, comments, files, notifications, activity, templates] = await Promise.all([
+  const [workspaces, tasks, pages, comments, files, notifications, activity, templates, clientFeedback] = await Promise.all([
     prisma.workspaceMember.findMany({
       where: { userId },
       select: { role: true, workspace: { select: { id: true, name: true, icon: true, ownerId: true } } },
@@ -50,6 +50,12 @@ exports.exportData = async (userId) => {
     prisma.notification.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
     prisma.activityLog.findMany({ where: { userId }, orderBy: { timestamp: 'asc' } }),
     prisma.template.findMany({ where: { ownerId: userId } }),
+    // What clients sent through the status pages of workspaces this user owns.
+    prisma.clientFeedback.findMany({
+      where: { workspace: { ownerId: userId } },
+      select: { kind: true, authorName: true, message: true, milestoneTitle: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    }),
   ]);
 
   await audit.record({ type: 'data_exported', actorId: userId });
@@ -73,6 +79,7 @@ exports.exportData = async (userId) => {
     notifications,
     activity,
     templates,
+    clientFeedback,
   };
 };
 
