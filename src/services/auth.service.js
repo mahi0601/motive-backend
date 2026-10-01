@@ -122,6 +122,7 @@ exports.loginWithGoogle = async (code) => {
       where: { id: user.id },
       data: { googleId: profile.id, password: null, tokenVersion: { increment: 1 } },
     });
+    require('../sockets/revoke').disconnectUser(user.id);
   }
 
   return result(user);
@@ -213,6 +214,7 @@ exports.refresh = async (refreshToken, csrfToken) => {
 exports.revokeAll = async (userId) => {
   if (!userId) return;
   await prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+  require('../sockets/revoke').disconnectUser(userId);
 };
 
 // Decode the refresh cookie (if any) just enough to revoke that user's
@@ -288,4 +290,5 @@ exports.resetPassword = async (token, newPassword) => {
     where: { id: user.id },
     data: { password: await hashPassword(newPassword), tokenVersion: { increment: 1 } },
   });
+  require('../sockets/revoke').disconnectUser(user.id);
 };

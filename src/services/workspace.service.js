@@ -356,6 +356,7 @@ exports.updateMemberRole = async (workspaceId, memberUserId, role, requesterId) 
     data: { role },
     include: { user: { select: { id: true, name: true, email: true } } },
   });
+  await require('../sockets/revoke').recheckUserAccess(memberUserId);
   return member;
 };
 
@@ -363,6 +364,7 @@ exports.removeMember = async (workspaceId, memberUserId, requesterId) => {
   const ws = await assertOwner(workspaceId, requesterId);
   if (memberUserId === ws.ownerId) throw AppError.badRequest("Can't remove the workspace owner");
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId: memberUserId } } });
+  await require('../sockets/revoke').recheckUserAccess(memberUserId);
 };
 
 // getRole derives 'owner' from Workspace.ownerId directly, not from a
@@ -389,6 +391,7 @@ exports.transferOwnership = async (workspaceId, newOwnerUserId, requesterId) => 
       data: { role: 'owner' },
     }),
   ]);
+  await require('../sockets/revoke').recheckUserAccess(requesterId);
 };
 
 // Self-service, deliberately not a special case bolted onto removeMember —
@@ -405,6 +408,7 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
   });
   if (!membership) throw AppError.notFound('Not a member of this workspace');
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId } } });
+  await require('../sockets/revoke').recheckUserAccess(userId);
 };
 
 // ── Public client status page ───────────────────────────
