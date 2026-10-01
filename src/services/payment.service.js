@@ -2,6 +2,7 @@ const Stripe = require('stripe');
 const config = require('../config/env');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
+const audit = require('./audit.service');
 
 // Lazily constructed — throws only when a payment route is actually hit without
 // keys configured, instead of crashing the whole app at boot.
@@ -154,11 +155,15 @@ const applyPaidCheckoutSession = async (session, userId) => {
 const applySubscription = async (subscription, eventType, knownUserId) => {
   const userId = knownUserId || subscription.metadata?.userId;
   const where = userId ? { id: userId } : { stripeSubscriptionId: subscription.id };
-  const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true } });
+  const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true, isPro: true } });
   if (!user) return; // not one of ours (or already deleted) — nothing to update
 
   const ended = eventType === 'customer.subscription.deleted' || subscription.status === 'canceled';
   const status = ended ? 'canceled' : subscription.status;
+  const nextIsPro = user.proLifetime || (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status));
+  if (nextIsPro !== user.isPro) {
+    await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: nextIsPro, status } });
+  }
   await prisma.user.update({
     where: { id: user.id },
     data: {

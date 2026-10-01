@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
+const audit = require('./audit.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
@@ -237,6 +238,7 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   });
 
   await sendInviteEmail(invite, ws, requester.name, raw);
+  await audit.record({ type: 'invite_created', actorId: requesterId, workspaceId, meta: { role } });
   return safeInviteFields(invite);
 };
 
@@ -313,7 +315,7 @@ const findInviteForResponse = async (rawToken, userEmail) => {
 // null when the invite was already fulfilled (nothing new to tell anyone).
 exports.acceptInvite = async (rawToken, userId, userEmail) => {
   const invite = await findInviteForResponse(rawToken, userEmail);
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const alreadyMember = await tx.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } },
     });
@@ -340,6 +342,8 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
     }
     return { workspace, notification };
   });
+  await audit.record({ type: 'invite_accepted', actorId: userId, workspaceId: invite.workspaceId, meta: { role: invite.role } });
+  return result;
 };
 
 exports.declineInvite = async (rawToken, userId, userEmail) => {
@@ -356,6 +360,7 @@ exports.updateMemberRole = async (workspaceId, memberUserId, role, requesterId) 
     data: { role },
     include: { user: { select: { id: true, name: true, email: true } } },
   });
+  await audit.record({ type: 'role_changed', actorId: requesterId, targetUserId: memberUserId, workspaceId, meta: { role } });
   await require('../sockets/revoke').recheckUserAccess(memberUserId);
   return member;
 };
@@ -364,6 +369,7 @@ exports.removeMember = async (workspaceId, memberUserId, requesterId) => {
   const ws = await assertOwner(workspaceId, requesterId);
   if (memberUserId === ws.ownerId) throw AppError.badRequest("Can't remove the workspace owner");
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId: memberUserId } } });
+  await audit.record({ type: 'member_removed', actorId: requesterId, targetUserId: memberUserId, workspaceId });
   await require('../sockets/revoke').recheckUserAccess(memberUserId);
 };
 
@@ -391,6 +397,7 @@ exports.transferOwnership = async (workspaceId, newOwnerUserId, requesterId) => 
       data: { role: 'owner' },
     }),
   ]);
+  await audit.record({ type: 'ownership_transferred', actorId: requesterId, targetUserId: newOwnerUserId, workspaceId });
   await require('../sockets/revoke').recheckUserAccess(requesterId);
 };
 
@@ -408,6 +415,7 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
   });
   if (!membership) throw AppError.notFound('Not a member of this workspace');
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId } } });
+  await audit.record({ type: 'member_left', actorId: userId, targetUserId: userId, workspaceId });
   await require('../sockets/revoke').recheckUserAccess(userId);
 };
 
@@ -426,6 +434,7 @@ exports.enableShare = async (workspaceId, requesterId) => {
     data: { shareTokenHash: tokenHash, shareEnabledAt: new Date() },
     select: { shareEnabledAt: true },
   });
+  await audit.record({ type: 'share_link_enabled', actorId: requesterId, workspaceId });
   return { token: raw, shareEnabledAt: ws.shareEnabledAt };
 };
 
@@ -435,6 +444,7 @@ exports.disableShare = async (workspaceId, requesterId) => {
     where: { id: workspaceId },
     data: { shareTokenHash: null, shareEnabledAt: null },
   });
+  await audit.record({ type: 'share_link_disabled', actorId: requesterId, workspaceId });
 };
 
 const STATUS_PAGE_TASK_LIMIT = 200;

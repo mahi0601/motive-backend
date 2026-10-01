@@ -7,6 +7,7 @@ const { verifyToken, signResetToken } = require('../utils/jwt.util');
 const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
 const sessionService = require('./session.service');
+const audit = require('./audit.service');
 const emailService = require('./email.service');
 const logger = require('../config/logger');
 
@@ -46,11 +47,19 @@ exports.login = async ({ email, password }, ctx) => {
   const user = await prisma.user.findUnique({ where: { email }, omit: { password: false } });
   // No password set → a Google-only account; there's nothing to compare
   // against (and bcrypt.compare would throw on a null hash, not just fail).
-  if (!user || !user.password) throw AppError.unauthorized('Invalid credentials');
+  if (!user || !user.password) {
+    // Unknown address or a Google-only account: recorded without the address.
+    await audit.record({ type: 'login_failed', targetUserId: user?.id });
+    throw AppError.unauthorized('Invalid credentials');
+  }
   const valid = await comparePassword(password, user.password);
-  if (!valid) throw AppError.unauthorized('Invalid credentials');
+  if (!valid) {
+    await audit.record({ type: 'login_failed', targetUserId: user.id });
+    throw AppError.unauthorized('Invalid credentials');
+  }
 
   delete user.password;
+  await audit.record({ type: 'login_success', actorId: user.id, meta: { method: 'password' } });
   return result(user, ctx);
 };
 
@@ -125,8 +134,10 @@ exports.loginWithGoogle = async (code, ctx) => {
     });
     await sessionService.revokeAllForUser(user.id);
     require('../sockets/revoke').disconnectUser(user.id);
+    await audit.record({ type: 'google_linked', actorId: user.id, meta: { passwordRemoved: true } });
   }
 
+  await audit.record({ type: 'login_success', actorId: user.id, meta: { method: 'google' } });
   return result(user, ctx);
 };
 
@@ -214,6 +225,7 @@ exports.revokeAll = async (userId) => {
   await prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
   await sessionService.revokeAllForUser(userId);
   require('../sockets/revoke').disconnectUser(userId);
+  await audit.record({ type: 'logout_all', actorId: userId });
 };
 
 // Ends the session named by the refresh cookie (this browser/device only) —
@@ -284,4 +296,5 @@ exports.resetPassword = async (token, newPassword) => {
   });
   await sessionService.revokeAllForUser(user.id);
   require('../sockets/revoke').disconnectUser(user.id);
+  await audit.record({ type: 'password_reset', actorId: user.id });
 };

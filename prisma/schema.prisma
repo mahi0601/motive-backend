@@ -383,6 +383,28 @@ model Session {
   @@index([expiresAt])
 }
 
+// Append-only record of security-relevant events (sign-ins, credential and
+// membership changes, billing changes, deletions) for incident response.
+// Deliberately has NO foreign keys: it must survive the deletion of the user or
+// workspace it describes (an `account_deleted` row is the whole point), and it
+// stores ids, never emails or names. `ip` is truncated to a /24 (IPv4) or /48
+// (IPv6) before it is written. Pruned after 180 days by jobs/cleanup.js.
+model SecurityEvent {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  type         String
+  actorId      String?
+  targetUserId String?
+  workspaceId  String?
+  ip           String?
+  meta         Json?
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([actorId, createdAt])
+  @@index([targetUserId, createdAt])
+}
+
 // Idempotency ledger for Stripe webhooks — Stripe redelivers events on any
 // non-2xx/timeout and can occasionally send the same event twice even on a
 // clean 200. Recording `stripeEventId` first (unique) and no-op'ing on a

@@ -4,6 +4,7 @@ const { comparePassword } = require('../utils/password.util');
 const paymentService = require('./payment.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
+const audit = require('./audit.service');
 
 // `hasPassword` tells the client which confirmation the delete-account flow
 // needs (password vs. typing the account email — see deleteAccount). Derived
@@ -88,6 +89,7 @@ exports.deleteAccount = async (userId, password, confirmEmail) => {
 
   await prisma.user.delete({ where: { id: userId } });
   require('../sockets/revoke').disconnectUser(userId);
+  await audit.record({ type: 'account_deleted', targetUserId: userId, meta: { files: files.length } });
 
   await Promise.allSettled(files.map((f) => storageService.deleteFile(f.url))).then((results) => {
     const failed = results.filter((r) => r.status === 'rejected').length;

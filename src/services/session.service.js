@@ -38,6 +38,7 @@ const reuseOrGrace = async (session, gen) => {
   // An older or out-of-window token: whoever holds it is either a thief or a
   // stale client. Cutting the session is safe either way — the owner signs in again.
   await exports.revoke(session.id);
+  await require('./audit.service').record({ type: 'refresh_reuse', targetUserId: session.userId });
   logger.warn('Refresh token reuse detected — session revoked', { userId: session.userId, sid: session.id, event: 'refresh_reuse' });
   throw revoked();
 };
