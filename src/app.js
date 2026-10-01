@@ -3,7 +3,6 @@
 // process-level handlers — so tests (supertest) can import it without binding
 // a port. server.js is what actually boots it.
 const express = require('express');
-const pinoHttp = require('pino-http');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -58,7 +57,7 @@ app.use(cookieParser());
 // unrelated plain-text log format. Mounted after the raw-body Stripe
 // webhook route above, same as morgan was, so that request's body is never
 // logged either.
-app.use(pinoHttp({ logger: logger.pino }));
+app.use(logger.createHttpLogger());
 
 // Serve uploaded attachments. The frontend and API are on different origins
 // (even in prod: motive-app-*.onrender.com vs motive-api-*.onrender.com), and

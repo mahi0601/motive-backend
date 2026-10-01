@@ -9,6 +9,7 @@
 // would be circular. Mirrors instrument.js's existing pattern of reading
 // process.env.SENTRY_DSN directly for the same reason.
 const pino = require('pino');
+const pinoHttp = require('pino-http');
 const { Sentry, enabled: sentryEnabled } = require('./sentry');
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -26,8 +27,22 @@ const pinoOptions = {
     paths: [
       'req.headers.authorization',
       'req.headers.cookie',
+      'req.headers["x-csrf-token"]',
+      'req.headers["stripe-signature"]',
+      'res.headers["set-cookie"]',
+      'res.headers.location',
+      // `*.x` only matches one level down (user.x), NOT a top-level `x`, so the
+      // common names are listed both ways.
       '*.password',
+      'password',
       '*.token',
+      'token',
+      '*.accessToken',
+      'accessToken',
+      '*.refreshToken',
+      'refreshToken',
+      '*.csrfToken',
+      'csrfToken',
       '*.email',
       'email',
     ],
@@ -53,6 +68,46 @@ if (!isProd) {
 }
 
 const base = transport ? pino(pinoOptions, transport) : pino(pinoOptions);
+
+// ── HTTP request logging ───────────────────────────────
+// pino-http's DEFAULT serializers log the full request URL and every request
+// header, and the response headers — which include `Set-Cookie` (the 30-day
+// refresh token) and `Location` (OAuth/CSRF hand-off). Logs end up on Render's
+// dashboard and in Better Stack, readable by far more people than the
+// database, so a token that appears there is a leaked credential.
+//
+// Some credentials live in the URL PATH rather than a header or body: the public
+// status-page token, workspace invite tokens, and the Stripe checkout-session
+// id. Query strings can carry ?code= / ?state= / ?csrf=. scrubUrl removes both.
+const TOKEN_PATHS = [
+  /^(\/api\/status\/)[^/?#]+/i,
+  /^(\/api\/invites\/)[^/?#]+/i,
+  /^(\/api\/payments\/session\/)[^/?#]+/i,
+];
+
+function scrubUrl(url) {
+  if (!url) return '';
+  const path = String(url).split('#')[0].split('?')[0]; // drop query string + fragment
+  return TOKEN_PATHS.reduce((p, pattern) => p.replace(pattern, '$1[redacted]'), path);
+}
+
+// Logs only what operations need — method, scrubbed path, status, timing, and
+// the client ip — and never headers. Uses `originalUrl` because Express strips
+// the mount prefix from `req.url` while a request is inside a mounted router.
+function createHttpLogger(instance = base) {
+  return pinoHttp({
+    logger: instance,
+    serializers: {
+      req: (req) => ({
+        id: req.id,
+        method: req.method,
+        url: scrubUrl(req.originalUrl || req.url),
+        ip: req.ip || req.socket?.remoteAddress,
+      }),
+      res: (res) => ({ statusCode: res.statusCode }),
+    },
+  });
+}
 
 // `err.isOperational` (see utils/AppError.js) is the same signal
 // error.middleware.js already uses to decide what a client sees — reused
@@ -82,4 +137,4 @@ function debug(msg, context = {}) {
   base.debug(context, msg);
 }
 
-module.exports = { error, warn, info, debug, pino: base };
+module.exports = { error, warn, info, debug, pino: base, pinoOptions, scrubUrl, createHttpLogger };
