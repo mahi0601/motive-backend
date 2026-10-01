@@ -59,19 +59,32 @@ describe('auth.service', () => {
   test('refresh rotates the pair for a valid, current-version token', async () => {
     user = await makeUser('refresh');
     const issued = issueTokens(user);
-    const { accessToken, refreshToken: newRefresh } = await authService.refresh(issued.refreshToken);
+    const { accessToken, refreshToken: newRefresh } = await authService.refresh(issued.refreshToken, issued.csrfToken);
     expect(verifyToken(accessToken)).toMatchObject({ id: user.id, type: 'access' });
     expect(verifyToken(newRefresh)).toMatchObject({ id: user.id, type: 'refresh', ver: 0 });
   });
 
   test('refresh rejects a token whose tokenVersion no longer matches (revoked)', async () => {
     user = await makeUser('revoke');
-    const { refreshToken } = issueTokens(user); // ver: 0, matching the fresh user's tokenVersion
+    const { refreshToken, csrfToken } = issueTokens(user); // ver: 0, matching the fresh user's tokenVersion
 
     // Simulates "logged out everywhere" / a password change elsewhere.
     await authService.revokeAll(user.id);
 
-    await expect(authService.refresh(refreshToken)).rejects.toThrow();
+    // Passing the matching csrfToken here so this specifically exercises
+    // the tokenVersion-revocation rejection, not an incidental CSRF one.
+    await expect(authService.refresh(refreshToken, csrfToken)).rejects.toThrow();
+  });
+
+  test('refresh rejects a mismatched/missing X-CSRF-Token even with an otherwise-valid, current token', async () => {
+    user = await makeUser('csrf-mismatch');
+    const { refreshToken, csrfToken } = issueTokens(user);
+
+    await expect(authService.refresh(refreshToken, 'wrong-csrf-value')).rejects.toMatchObject({ statusCode: 403 });
+    await expect(authService.refresh(refreshToken, undefined)).rejects.toMatchObject({ statusCode: 403 });
+    // Sanity check: the same pair with the RIGHT csrfToken still works —
+    // isolates the above two failures to the CSRF check specifically.
+    await expect(authService.refresh(refreshToken, csrfToken)).resolves.toBeDefined();
   });
 
   test('logout is a no-op on a missing/invalid cookie — never throws', async () => {
@@ -81,13 +94,24 @@ describe('auth.service', () => {
 
   test('logout revokes the session — a refresh token issued before logout is rejected after', async () => {
     user = await makeUser('logout');
-    const { refreshToken } = issueTokens(user);
+    const { refreshToken, csrfToken } = issueTokens(user);
 
-    await authService.logout(refreshToken);
+    await authService.logout(refreshToken, csrfToken);
 
-    await expect(authService.refresh(refreshToken)).rejects.toThrow();
+    await expect(authService.refresh(refreshToken, csrfToken)).rejects.toThrow();
     const reloaded = await prisma.user.findUnique({ where: { id: user.id } });
     expect(reloaded.tokenVersion).toBe(1);
+  });
+
+  test('logout does NOT revoke when the CSRF token is missing or wrong — blocks a blind forged logout', async () => {
+    user = await makeUser('logout-csrf-mismatch');
+    const { refreshToken } = issueTokens(user);
+
+    await authService.logout(refreshToken, 'wrong-csrf-value');
+    await authService.logout(refreshToken, undefined);
+
+    const reloaded = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(reloaded.tokenVersion).toBe(0); // still unrevoked
   });
 
   test('resetPassword\'s token is single-use via the same tokenVersion bump refresh/logout rely on', async () => {
