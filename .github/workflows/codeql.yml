@@ -3,8 +3,7 @@ name: CodeQL
 on:
   push:
     branches: [master]
-  pull_request:
-    branches: [master]
+  pull_request: # any base branch, so stacked PRs are checked too
   schedule:
     - cron: "17 4 * * 1" # weekly, Monday 04:17 UTC
 
