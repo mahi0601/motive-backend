@@ -42,4 +42,5 @@ exports.statusPageRules = [
     .withMessage('milestoneDate must be a date (YYYY-MM-DD)'),
   body('accent').optional().isIn(ACCENTS).withMessage(`accent must be one of: ${ACCENTS.join(', ')}`),
   body('hideBranding').optional().isBoolean({ strict: true }).withMessage('hideBranding must be true or false'),
+  body('allowFeedback').optional().isBoolean({ strict: true }).withMessage('allowFeedback must be true or false'),
 ];

@@ -490,6 +490,8 @@ exports.disableShare = async (workspaceId, requesterId) => {
 // are touched; '' (or null for the date) clears one. Hiding the "Powered by
 // Motive" footer needs Pro: refused here for a free owner, and the public read
 // below re-checks it so a lapsed Pro brings the footer back without a write.
+exports.assertOwner = (...args) => assertOwner(...args);
+
 exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   await assertOwner(workspaceId, requesterId);
 
@@ -502,6 +504,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
       input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
     statusAccent: input.accent,
     statusHideBranding: input.hideBranding,
+    statusAllowFeedback: input.allowFeedback,
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
 
@@ -515,7 +518,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },
     data,
-    select: { statusHeadline: true, statusSummary: true, milestoneTitle: true, milestoneDate: true, statusAccent: true, statusHideBranding: true },
+    select: { statusHeadline: true, statusSummary: true, milestoneTitle: true, milestoneDate: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true },
   });
   // Which fields changed, never what they say.
   await audit.record({ type: 'status_page_updated', actorId: requesterId, workspaceId, meta: { fields: Object.keys(data).join(',') } });
@@ -543,6 +546,7 @@ exports.getStatusByToken = async (rawToken) => {
       milestoneDate: true,
       statusAccent: true,
       statusHideBranding: true,
+      statusAllowFeedback: true,
       owner: { select: { isPro: true } },
     },
   });
@@ -574,6 +578,7 @@ exports.getStatusByToken = async (rawToken) => {
       accent: ws.statusAccent,
       // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
       hideBranding: ws.statusHideBranding && ws.owner.isPro,
+      allowFeedback: ws.statusAllowFeedback,
     },
     summary: { ...summary, total, percent },
     tasks: tasks.map((t) => ({

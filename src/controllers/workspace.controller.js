@@ -1,4 +1,5 @@
 const WorkspaceService = require('../services/workspace.service');
+const FeedbackService = require('../services/feedback.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.list = asyncHandler(async (req, res) => {
@@ -59,6 +60,21 @@ exports.enableShare = asyncHandler(async (req, res) => {
 exports.updateStatusPage = asyncHandler(async (req, res) => {
   const page = await WorkspaceService.updateStatusPage(req.params.id, req.user.id, req.body);
   res.json({ success: true, page });
+});
+
+exports.listFeedback = asyncHandler(async (req, res) => {
+  const result = await FeedbackService.list(req.params.id, req.user.id, req.query);
+  res.json({ success: true, ...result });
+});
+
+exports.markFeedbackRead = asyncHandler(async (req, res) => {
+  await FeedbackService.markRead(req.params.id, req.params.feedbackId, req.user.id);
+  res.json({ success: true });
+});
+
+exports.deleteFeedback = asyncHandler(async (req, res) => {
+  await FeedbackService.remove(req.params.id, req.params.feedbackId, req.user.id);
+  res.json({ success: true });
 });
 
 exports.disableShare = asyncHandler(async (req, res) => {
