@@ -13,9 +13,10 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, user });
 });
 
-// Permanently delete the account + all owned data. Requires the password again.
+// Permanently delete the account + all owned data. Requires the password again
+// (or, for a Google-only account, its email typed out).
 exports.deleteAccount = asyncHandler(async (req, res) => {
-  await UserService.deleteAccount(req.user.id, req.body.password);
+  await UserService.deleteAccount(req.user.id, req.body.password, req.body.confirmEmail);
   tokenService.clearRefreshCookie(res); // the account (and its tokens) no longer exist
   res.status(200).json({ success: true, message: 'Account deleted' });
 });

@@ -18,6 +18,17 @@ function normalize(err) {
   // Prisma: malformed id / wrong type for a filter (roughly Mongoose's bad-ObjectId case)
   if (err.code === 'P2023') return AppError.badRequest('Invalid id');
 
+  // Prisma: the query's arguments were malformed or of the wrong type (e.g. a
+  // bad enum value or a non-date string that slipped past route validation).
+  // That's bad client input, not a server fault — a 400, not a 500 that pages
+  // Sentry.
+  if (err.name === 'PrismaClientValidationError') return AppError.badRequest('Invalid request data');
+
+  // Prisma: a value didn't fit its column (P2000), or a referenced record
+  // doesn't exist (P2003, e.g. an assigneeId/parentId pointing at nothing).
+  if (err.code === 'P2000') return AppError.badRequest('A value is too long');
+  if (err.code === 'P2003') return AppError.badRequest('A referenced record does not exist');
+
   // JWT
   if (err.name === 'JsonWebTokenError') return AppError.unauthorized('Invalid token');
   if (err.name === 'TokenExpiredError') return AppError.unauthorized('Token expired');
@@ -28,8 +39,13 @@ function normalize(err) {
   return err;
 }
 
+// Runs BEFORE Sentry's express error handler (see app.js): Sentry reports any
+// error that reaches it without a sub-500 status, so translating client-input
+// errors into 4xx AppErrors first keeps them out of Sentry entirely.
+const normalizeErrors = (err, _req, _res, next) => next(normalize(err));
+
 // eslint-disable-next-line no-unused-vars
-module.exports = (err, _req, res, _next) => {
+const errorHandler = (err, _req, res, _next) => {
   const normalized = normalize(err);
   const statusCode = normalized.statusCode || 500;
   const isOperational = normalized.isOperational || statusCode < 500;
@@ -51,3 +67,7 @@ module.exports = (err, _req, res, _next) => {
     ...(config.isProd ? {} : { stack: err.stack }),
   });
 };
+
+module.exports = errorHandler;
+module.exports.normalizeErrors = normalizeErrors;
+module.exports.normalize = normalize;

@@ -9,8 +9,17 @@ exports.signAccessToken = (userId) =>
     expiresIn: config.jwt.accessExpiresIn,
   });
 
-exports.signRefreshToken = (userId, tokenVersion) =>
-  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion }, config.jwt.secret, {
+// `csrf` is a random nonce, opaque to the client except that the exact same
+// value is handed back to it once, in the JSON body of whichever call
+// issued this token (see token.service.js#issueTokens) — never in a
+// cookie. That split is what makes it a working CSRF defense even though
+// the frontend and API are on different origins in production: a
+// cross-site forged request gets the httpOnly refresh cookie attached
+// automatically by the browser, but has no way to also know this value, so
+// it can't produce a matching X-CSRF-Token header. See
+// auth.service.js#refresh/#logout for where it's actually checked.
+exports.signRefreshToken = (userId, tokenVersion, csrf) =>
+  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion, csrf }, config.jwt.secret, {
     expiresIn: config.jwt.refreshExpiresIn,
   });
 

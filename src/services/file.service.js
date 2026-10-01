@@ -6,10 +6,10 @@ const taskService = require('./task.service');
 // `taskId` is optional — a bare upload (no task association) still just
 // returns the URL/file row. Attaching a file to a task is a content
 // mutation, same as adding a subtask — requires 'write'.
-exports.upload = async (file, { protocol, host }, taskId, userId) => {
+exports.upload = async (file, taskId, userId) => {
   if (taskId) await taskService.assertAccess(taskId, userId, 'write');
 
-  const { url: fileUrl } = await storageService.saveFile(file, { protocol, host });
+  const { url: fileUrl } = await storageService.saveFile(file);
   const fileRow = await prisma.file.create({
     data: { name: file.originalname, url: fileUrl, uploadedBy: userId, taskId: taskId || null },
   });

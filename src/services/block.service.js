@@ -11,9 +11,23 @@ const workspaceService = require('./workspace.service');
 async function assertPageAccess(pageId, userId, need = 'read') {
   const page = await prisma.page.findUnique({ where: { id: pageId }, select: { ownerId: true, workspaceId: true } });
   if (!page) throw AppError.notFound('Page not found');
-  const isOwner = page.ownerId === userId;
-  if (!isOwner && !(await workspaceService.canAccess(page.workspaceId, userId, need))) {
-    throw AppError.notFound('Page not found');
+  await workspaceService.assertResourceAccess(page, userId, need, 'Page not found');
+}
+// Exported so socket.handler.js can gate `page:join` with the exact same
+// check block mutations already go through, instead of a room anyone
+// holding a pageId could join unchecked.
+exports.assertPageAccess = assertPageAccess;
+
+// A toggle's child must live on the same page as the toggle. Without this a
+// caller with write access to page A could set `parentBlockId` to a block on
+// page B they can't access, attaching (and exposing the existence of) content
+// across pages. `blockId` is passed on update so a block can't parent itself.
+async function assertParentBlockOnPage(pageId, parentBlockId, blockId) {
+  if (!parentBlockId) return;
+  if (parentBlockId === blockId) throw AppError.badRequest('A block cannot be its own parent');
+  const parent = await prisma.block.findUnique({ where: { id: parentBlockId }, select: { pageId: true } });
+  if (!parent || parent.pageId !== pageId) {
+    throw AppError.badRequest('Parent block must be on the same page');
   }
 }
 
@@ -25,6 +39,7 @@ exports.listByPage = async (pageId, userId) => {
 exports.create = async (pageId, data, userId) => {
   await assertPageAccess(pageId, userId, 'write');
   const parentBlockId = data.parentBlockId || null;
+  await assertParentBlockOnPage(pageId, parentBlockId);
 
   if (data.position !== undefined && data.position !== null) {
     return prisma.block.create({
@@ -59,7 +74,10 @@ exports.update = async (id, data, userId) => {
   // Indent/outdent under a toggle — the frontend computes both the new
   // parent and the resulting position (e.g. "last among the new siblings"),
   // since it already has the full block list loaded.
-  if ('parentBlockId' in data) patch.parentBlockId = data.parentBlockId;
+  if ('parentBlockId' in data) {
+    await assertParentBlockOnPage(block.pageId, data.parentBlockId, id);
+    patch.parentBlockId = data.parentBlockId;
+  }
   return prisma.block.update({ where: { id }, data: patch });
 };
 

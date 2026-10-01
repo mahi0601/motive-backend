@@ -23,12 +23,20 @@ const oauthStateCookieOptions = () => ({
 // app registers an intent-filter for (see AndroidManifest.xml).
 const NATIVE_CALLBACK_URL = 'com.motive.app://oauth-callback';
 
-// Set the refresh cookie and return { user, accessToken }. The access token is
-// kept in memory by the client; the refresh token lives only in the httpOnly cookie.
-const sendAuth = (res, status, { user, accessToken, refreshToken }) => {
+// RFC 7636 code_challenge / code_verifier alphabet and length bounds.
+const PKCE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
+
+// Set the refresh cookie and return { user, accessToken, csrfToken }. The
+// access token and csrfToken are both kept in memory by the client; the
+// refresh token lives only in the httpOnly cookie. csrfToken must come back
+// as the X-CSRF-Token header on the next /refresh or /logout call — see
+// jwt.util.js#signRefreshToken for why.
+const sendAuth = (res, status, { user, accessToken, refreshToken, csrfToken }) => {
   tokenService.setRefreshCookie(res, refreshToken);
-  res.status(status).json({ success: true, user, accessToken });
+  res.status(status).json({ success: true, user, accessToken, csrfToken });
 };
+
+const readCsrfHeader = (req) => req.get('X-CSRF-Token');
 
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
@@ -45,14 +53,14 @@ exports.login = asyncHandler(async (req, res) => {
 // Silent refresh: read the cookie, rotate the pair, return a new access token.
 exports.refresh = asyncHandler(async (req, res) => {
   const token = tokenService.readRefreshCookie(req);
-  const data = await AuthService.refresh(token);
+  const data = await AuthService.refresh(token, readCsrfHeader(req));
   sendAuth(res, 200, data);
 });
 
 // Revoke all refresh tokens for the user, then clear the cookie.
 exports.logout = asyncHandler(async (req, res) => {
   const token = tokenService.readRefreshCookie(req);
-  await AuthService.logout(token);
+  await AuthService.logout(token, readCsrfHeader(req));
   tokenService.clearRefreshCookie(res);
   res.status(200).json({ success: true, message: 'Logged out' });
 });
@@ -89,7 +97,20 @@ exports.googleRedirect = asyncHandler(async (req, res) => {
   if (!config.google.clientId) throw AppError.badRequest('Google sign-in is not configured.');
   const mode = req.query.native === '1' ? 'native' : 'web';
   const nonce = crypto.randomBytes(16).toString('hex');
-  res.cookie(OAUTH_STATE_COOKIE, nonce, oauthStateCookieOptions());
+
+  // Native flow only: the app's PKCE challenge rides in the server-set state
+  // cookie (not the `state` param), so it can't be swapped by anyone who can
+  // merely craft a callback URL. base64url(sha256) is always 43 characters;
+  // the range allows other valid S256 encodings without accepting junk.
+  let cookieValue = nonce;
+  if (mode === 'native') {
+    const challenge = req.query.code_challenge;
+    if (typeof challenge !== 'string' || !PKCE_PATTERN.test(challenge)) {
+      throw AppError.badRequest('Missing or invalid code_challenge.');
+    }
+    cookieValue = `${nonce}.${challenge}`;
+  }
+  res.cookie(OAUTH_STATE_COOKIE, cookieValue, oauthStateCookieOptions());
 
   // An invite token riding along on `?invite=` (see GoogleSignInButton.jsx —
   // Login/Register pass it through when the page itself was reached via an
@@ -133,7 +154,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   // Verify `state` matches the nonce we set on THIS browser during
   // googleRedirect — see the comment there. Single-use: clear it regardless
   // of outcome so a captured callback URL can't be replayed either.
-  const expectedNonce = req.cookies?.[OAUTH_STATE_COOKIE];
+  const [expectedNonce, codeChallenge] = (req.cookies?.[OAUTH_STATE_COOKIE] || '').split('.');
   res.clearCookie(OAUTH_STATE_COOKIE, oauthStateCookieOptions());
   const [nonce, mode, inviteToken] = typeof state === 'string' ? state.split('.') : [];
   const stateValid = !!expectedNonce && nonce === expectedNonce;
@@ -149,7 +170,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   try {
     const data = await AuthService.loginWithGoogle(code);
     if (isNative) {
-      const exchangeCode = await AuthService.createNativeExchangeCode(data.user.id);
+      // A native callback with no stored challenge means the flow didn't start
+      // through googleRedirect's native branch — refuse rather than mint a
+      // code that nothing could ever verify.
+      if (!codeChallenge) return res.redirect(failureRedirect);
+      const exchangeCode = await AuthService.createNativeExchangeCode(data.user.id, codeChallenge);
       const nativeUrl = inviteToken
         ? `${NATIVE_CALLBACK_URL}?code=${exchangeCode}&invite=${inviteToken}`
         : `${NATIVE_CALLBACK_URL}?code=${exchangeCode}`;
@@ -159,7 +184,17 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     // Same hand-off Login.jsx/Register.jsx already use for the email/password
     // path — land on the invite page (which now sees an authenticated user)
     // instead of /dashboard when this sign-in was reached via an invite link.
-    res.redirect(inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`);
+    //
+    // `csrf` rides the redirect URL, the one channel that actually reaches
+    // the frontend here — this is a top-level navigation, not an AJAX
+    // response, so there's no JSON body to put it in the way sendAuth()
+    // does for every other login path. AuthContext.jsx reads it once on
+    // load and strips it from the address bar immediately. It's inert on
+    // its own (the httpOnly refresh cookie is what actually authenticates
+    // anything), and it's replaced by a fresh one from the very next
+    // /refresh response either way — see jwt.util.js#signRefreshToken.
+    const target = inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`;
+    res.redirect(`${target}${target.includes('?') ? '&' : '?'}csrf=${data.csrfToken}`);
   } catch (err) {
     // logger.error only reports to Sentry when err isn't an operational
     // AppError (see config/logger.js) — loginWithGoogle already throws
@@ -175,8 +210,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
 // link — made from the WebView itself, so setRefreshCookie (inside
 // sendAuth) actually persists in the app's own cookie storage this time.
 exports.nativeExchange = asyncHandler(async (req, res) => {
-  const { code } = req.body;
+  const { code, code_verifier: codeVerifier } = req.body;
   if (!code) throw AppError.badRequest('Missing code');
-  const data = await AuthService.exchangeNativeCode(code);
+  if (typeof codeVerifier !== 'string' || !PKCE_PATTERN.test(codeVerifier)) {
+    throw AppError.badRequest('Missing or invalid code_verifier');
+  }
+  const data = await AuthService.exchangeNativeCode(code, codeVerifier);
   sendAuth(res, 200, data);
 });

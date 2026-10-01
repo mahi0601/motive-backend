@@ -1,11 +1,19 @@
+const crypto = require('crypto');
 const config = require('../config/env');
 const { signAccessToken, signRefreshToken } = require('../utils/jwt.util');
 
-// Mint an access token (returned to the client) + a refresh token (set as cookie).
-exports.issueTokens = (user) => ({
-  accessToken: signAccessToken(user.id),
-  refreshToken: signRefreshToken(user.id, user.tokenVersion),
-});
+// Mint an access token (returned to the client) + a refresh token (set as
+// cookie) + a CSRF nonce embedded in the refresh token and ALSO returned
+// directly to the client — see jwt.util.js#signRefreshToken for why that
+// split is the actual CSRF defense.
+exports.issueTokens = (user) => {
+  const csrfToken = crypto.randomBytes(16).toString('hex');
+  return {
+    accessToken: signAccessToken(user.id),
+    refreshToken: signRefreshToken(user.id, user.tokenVersion, csrfToken),
+    csrfToken,
+  };
+};
 
 const cookieOptions = () => ({
   httpOnly: true, // not readable by JS → immune to XSS token theft

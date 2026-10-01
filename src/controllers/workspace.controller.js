@@ -50,3 +50,13 @@ exports.leaveWorkspace = asyncHandler(async (req, res) => {
   await WorkspaceService.leaveWorkspace(req.params.id, req.user.id);
   res.json({ success: true });
 });
+
+exports.enableShare = asyncHandler(async (req, res) => {
+  const share = await WorkspaceService.enableShare(req.params.id, req.user.id);
+  res.json({ success: true, share });
+});
+
+exports.disableShare = asyncHandler(async (req, res) => {
+  await WorkspaceService.disableShare(req.params.id, req.user.id);
+  res.json({ success: true });
+});

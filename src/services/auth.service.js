@@ -80,6 +80,14 @@ exports.loginWithGoogle = async (code) => {
   if (!profileRes.ok) throw AppError.unauthorized('Google sign-in failed');
   const profile = await profileRes.json(); // { id, email, name, picture, verified_email }
   if (!profile.email) throw AppError.unauthorized('Your Google account has no email to sign in with.');
+  // `verified_email` was named in this destructuring comment but never
+  // actually checked — an account-linking flow (the `else if (!user.googleId)`
+  // branch below) that trusts an *unverified* email is exactly how someone
+  // registers `alice@x.com` at Google without owning it and gets silently
+  // logged into the existing Motive account with that email.
+  if (!profile.verified_email) {
+    throw AppError.unauthorized('Your Google email address is not verified.');
+  }
 
   let user = await prisma.user.findUnique({ where: { email: profile.email } });
   if (!user) {
@@ -102,19 +110,35 @@ exports.loginWithGoogle = async (code) => {
 // model comment in schema.prisma for why this exists instead of just
 // setting the refresh cookie: the system browser and the app's WebView are
 // separate cookie jars, so that cookie never reaches the WebView.
-exports.createNativeExchangeCode = async (userId) => {
+// `codeChallenge` is the app's PKCE challenge (RFC 7636, S256) — see
+// verifyPkce below. Without it the code alone would be a bearer credential
+// sitting in a custom-scheme URL that any other installed app can also claim.
+exports.createNativeExchangeCode = async (userId, codeChallenge) => {
   const code = crypto.randomBytes(32).toString('hex');
   await prisma.nativeExchangeCode.create({
-    data: { code, userId, expiresAt: new Date(Date.now() + 60_000) },
+    data: { code, userId, codeChallenge, expiresAt: new Date(Date.now() + 60_000) },
   });
   return code;
+};
+
+// base64url(sha256(verifier)) must equal the challenge stored at sign-in
+// start. Constant-time comparison; both sides are fixed-length digests.
+const verifyPkce = (verifier, challenge) => {
+  if (typeof verifier !== 'string' || typeof challenge !== 'string') return false;
+  const computed = Buffer.from(crypto.createHash('sha256').update(verifier).digest('base64url'));
+  const expected = Buffer.from(challenge);
+  return computed.length === expected.length && crypto.timingSafeEqual(computed, expected);
 };
 
 // `delete` on the unique `code` key is the atomicity: exactly one caller can
 // ever successfully delete a given row, so a code can't be exchanged twice
 // even under a concurrent retry/replay — no separate "mark as used" step to
 // race against.
-exports.exchangeNativeCode = async (code) => {
+//
+// The PKCE check runs AFTER that delete on purpose: a wrong verifier burns
+// the code, so an interceptor gets exactly one guess and the legitimate app's
+// own (correct) attempt then fails closed rather than racing the attacker.
+exports.exchangeNativeCode = async (code, codeVerifier) => {
   let record;
   try {
     record = await prisma.nativeExchangeCode.delete({ where: { code } });
@@ -125,14 +149,21 @@ exports.exchangeNativeCode = async (code) => {
   if (record.expiresAt < new Date()) {
     throw AppError.unauthorized('This sign-in link has expired — please try again.');
   }
+  if (!verifyPkce(codeVerifier, record.codeChallenge)) {
+    logger.warn('Native exchange rejected — PKCE verifier mismatch', { userId: record.userId });
+    throw AppError.unauthorized('This sign-in link is not valid — please try again.');
+  }
 
   const user = await prisma.user.findUnique({ where: { id: record.userId } });
   if (!user) throw AppError.unauthorized('User no longer exists');
   return result(user);
 };
 
-// Validate a refresh token and rotate it (issue a fresh pair).
-exports.refresh = async (refreshToken) => {
+// Validate a refresh token and rotate it (issue a fresh pair). `csrfToken` is
+// the X-CSRF-Token header — see jwt.util.js#signRefreshToken for the full
+// rationale. Checked before the DB lookup, since a request that's going to
+// be rejected on CSRF grounds shouldn't spend a query first.
+exports.refresh = async (refreshToken, csrfToken) => {
   if (!refreshToken) throw AppError.unauthorized('No refresh token');
 
   let payload;
@@ -143,6 +174,10 @@ exports.refresh = async (refreshToken) => {
     throw AppError.unauthorized('Invalid refresh token');
   }
   if (payload.type !== 'refresh') throw AppError.unauthorized('Invalid token type');
+
+  if (!payload.csrf || !csrfToken || csrfToken !== payload.csrf) {
+    throw AppError.forbidden('Invalid CSRF token');
+  }
 
   const user = await prisma.user.findUnique({ where: { id: payload.id } });
   if (!user) throw AppError.unauthorized('User no longer exists');
@@ -161,12 +196,30 @@ exports.revokeAll = async (userId) => {
 
 // Decode the refresh cookie (if any) just enough to revoke that user's
 // sessions — an expired/invalid/missing cookie is fine, logout still
-// succeeds either way, it just has nothing to revoke.
-exports.logout = async (refreshToken) => {
+// succeeds either way, it just has nothing to revoke. `csrfToken` is the
+// X-CSRF-Token header — see jwt.util.js#signRefreshToken. A mismatch is
+// treated the same as "nothing to revoke" rather than a thrown error,
+// matching this function's existing lenient shape, but it's still worth a
+// log line: unlike an expired cookie, it means someone tried to force a
+// logout via a cross-site request without knowing the nonce, which the
+// legitimate frontend always would.
+exports.logout = async (refreshToken, csrfToken) => {
   if (!refreshToken) return;
   try {
-    const { id } = verifyToken(refreshToken);
-    await exports.revokeAll(id);
+    const payload = verifyToken(refreshToken);
+    // Previously missing entirely — unlike refresh/resetPassword, this
+    // never checked `type`, so an access token or password-reset token
+    // planted in the same cookie slot would also successfully revoke every
+    // session for that `id`.
+    if (payload.type !== 'refresh') {
+      logger.warn('Logout called with a non-refresh token', { type: payload.type });
+      return;
+    }
+    if (!payload.csrf || !csrfToken || csrfToken !== payload.csrf) {
+      logger.warn('Logout blocked — CSRF token mismatch', { userId: payload.id });
+      return;
+    }
+    await exports.revokeAll(payload.id);
   } catch (err) {
     // Nothing to revoke either way — logout still succeeds. Logged only for
     // the audit trail this had zero trace of before.

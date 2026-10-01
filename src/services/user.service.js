@@ -2,7 +2,15 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const { comparePassword } = require('../utils/password.util');
 
-exports.getProfile = (userId) => prisma.user.findUnique({ where: { id: userId } });
+// `hasPassword` tells the client which confirmation the delete-account flow
+// needs (password vs. typing the account email — see deleteAccount). Derived
+// here so the hash itself never leaves the service layer.
+exports.getProfile = async (userId) => {
+  const user = await prisma.user.findUnique({ where: { id: userId }, omit: { password: false } });
+  if (!user) return null;
+  const { password, ...safe } = user;
+  return { ...safe, hasPassword: !!password };
+};
 
 exports.updateProfile = async (userId, data) => {
   // Whitelist updatable fields — never let a client patch password/email/tokenVersion here.
@@ -30,19 +38,27 @@ exports.updateProfile = async (userId, data) => {
 // thing to do, it's a routine way to accidentally destroy a team's data, not
 // an edge case. Block it here instead of teaching every future feature to
 // route around a personal-account operation with a team-wide blast radius.
-exports.deleteAccount = async (userId, password) => {
+//
+// Confirmation: an account with a password must re-enter it. A Google-only
+// account (see auth.service.js#loginWithGoogle) has no password — bcrypt.compare
+// would throw on a null hash — so it confirms by typing its own account email
+// instead. That's a deliberate confirmation step, weaker than a password: it
+// guards against an accidental click, not against someone who already holds
+// a live session for the account.
+exports.deleteAccount = async (userId, password, confirmEmail) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { password: false } });
   if (!user) throw AppError.notFound('User not found');
 
-  // A Google-only account (see auth.service.js#loginWithGoogle) has no
-  // password to confirm with — bcrypt.compare would throw on a null hash.
-  if (!user.password) {
-    throw AppError.badRequest(
-      'This account signed in with Google and has no password — contact support to delete it.'
-    );
+  if (user.password) {
+    if (typeof password !== 'string' || !password) throw AppError.badRequest('Password is required to delete your account');
+    const valid = await comparePassword(password, user.password);
+    if (!valid) throw AppError.unauthorized('Incorrect password');
+  } else {
+    const typed = typeof confirmEmail === 'string' ? confirmEmail.trim().toLowerCase() : '';
+    if (!typed || typed !== user.email.toLowerCase()) {
+      throw AppError.badRequest('Type your account email exactly to confirm deleting your account');
+    }
   }
-  const valid = await comparePassword(password, user.password);
-  if (!valid) throw AppError.unauthorized('Incorrect password');
 
   const ownedWithOthers = await prisma.workspace.findMany({
     where: { ownerId: userId, members: { some: { userId: { not: userId } } } },

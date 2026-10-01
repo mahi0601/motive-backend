@@ -40,21 +40,43 @@ const safeInviteFields = (invite) => ({
 // this is a step up from the plain unstyled <p> tags password-reset still
 // uses (out of scope here), not an attempt at pixel parity across
 // every mail client.
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+// The reversed (white-on-transparent) logo served by the frontend — generated
+// by `npm run brand` in the frontend repo at 2× (246×80), shown here at half
+// size so it stays sharp on retina screens. Email clients don't render SVG, hence
+// a PNG, and it must be an absolute URL, hence frontendUrl. The deployed
+// frontend has to be live for it to show; until then (or if a client blocks
+// images) the `alt` text below keeps "Motive" visible in the same white bold.
+const EMAIL_LOGO_WIDTH = 123;
+const EMAIL_LOGO_HEIGHT = 40;
+
 const sendInviteEmail = async (invite, workspace, inviterName, rawToken) => {
   const acceptUrl = `${config.frontendUrl}/invite/${rawToken}`;
+  const logoUrl = `${config.frontendUrl}/brand/logo-email.png`;
+  // User-controlled strings go into HTML below — escape them so a workspace
+  // or inviter name can't inject markup into an email sent from Motive's address.
+  const safeWorkspaceName = escapeHtml(workspace.name);
+  const safeInviterName = escapeHtml(inviterName);
   const roleLabel = invite.role === 'viewer' ? 'a viewer' : 'an editor';
   await emailService.sendEmail({
     to: invite.email,
     subject: `You're invited to join ${workspace.name} on Motive`,
     html: `<div style="background:#F6F8F9;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <div style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;border:1px solid #DDE4E7;overflow:hidden;">
-    <div style="background:linear-gradient(135deg,#0E4C5C,#1B7A8C);padding:24px 32px;">
-      <span style="color:#FFFFFF;font-size:18px;font-weight:700;">Motive</span>
+    <div style="background-color:#0E4C5C;background-image:linear-gradient(135deg,#0E4C5C,#1B7A8C);padding:24px 32px;">
+      <img src="${logoUrl}" alt="Motive" width="${EMAIL_LOGO_WIDTH}" height="${EMAIL_LOGO_HEIGHT}" style="display:block;border:0;outline:none;height:${EMAIL_LOGO_HEIGHT}px;width:auto;color:#FFFFFF;font-size:18px;font-weight:700;line-height:${EMAIL_LOGO_HEIGHT}px;">
     </div>
     <div style="padding:32px;">
-      <h1 style="margin:0 0 16px;font-size:20px;color:#0F1A20;">You're invited to ${workspace.name}</h1>
+      <h1 style="margin:0 0 16px;font-size:20px;color:#0F1A20;">You're invited to ${safeWorkspaceName}</h1>
       <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5E6E77;">
-        <strong style="color:#0F1A20;">${inviterName}</strong> invited you to join <strong style="color:#0F1A20;">${workspace.name}</strong> on Motive as ${roleLabel}.
+        <strong style="color:#0F1A20;">${safeInviterName}</strong> invited you to join <strong style="color:#0F1A20;">${safeWorkspaceName}</strong> on Motive as ${roleLabel}.
       </p>
       <a href="${acceptUrl}" style="display:inline-block;background:#1B7A8C;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 24px;border-radius:8px;">Accept invite</a>
       <p style="margin:24px 0 0;font-size:13px;color:#5E6E77;">This link expires in 7 days. If you weren't expecting this, you can safely ignore this email.</p>
@@ -91,10 +113,14 @@ exports.getDefault = async (userId) => {
   return ws;
 };
 
+// Allowlist the writable fields — spreading the raw request body here would
+// let a caller pass nested relation writes (e.g. `tasks: { connect: [...] }`)
+// and pull other users' records into their own workspace.
 exports.create = (data, userId) =>
   prisma.workspace.create({
     data: {
-      ...data,
+      name: data?.name,
+      icon: data?.icon,
       ownerId: userId,
       members: { create: [{ userId, role: 'owner' }] },
     },
@@ -134,6 +160,20 @@ exports.canAccess = async (workspaceId, userId, need = 'read') => {
   const role = await exports.getRole(workspaceId, userId);
   if (!role) return false;
   return ROLE_RANK[role] >= NEED_RANK[need];
+};
+
+// The access rule every owned resource shares — Task (`userId`), Page
+// (`ownerId`) and, through its page, Block: the creator always has access;
+// anyone else needs a workspace role sufficient for `need`. Throws a 404
+// (never a 403) with `notFoundMessage`, so a non-member can't tell a resource
+// they can't reach from one that doesn't exist. `resource` is any row with
+// `{ ownerId | userId, workspaceId }`.
+exports.assertResourceAccess = async (resource, userId, need, notFoundMessage) => {
+  const creatorId = 'ownerId' in resource ? resource.ownerId : resource.userId;
+  if (creatorId === userId) return;
+  if (!(await exports.canAccess(resource.workspaceId, userId, need))) {
+    throw AppError.notFound(notFoundMessage);
+  }
 };
 
 // Assert the requester owns this workspace, returning it. The same
@@ -362,4 +402,75 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
   });
   if (!membership) throw AppError.notFound('Not a member of this workspace');
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId } } });
+};
+
+// ── Public client status page ───────────────────────────
+// One share link per workspace. Same token pattern as invites (newInviteToken:
+// random raw token, only its sha256 stored) so a database read can't reveal a
+// working link, and the raw token is only ever shown once, here, to the owner.
+//
+// Calling enableShare again rotates the link — the old one stops working
+// immediately, which is the "regenerate" action in the UI.
+exports.enableShare = async (workspaceId, requesterId) => {
+  await assertOwner(workspaceId, requesterId);
+  const { raw, tokenHash } = newInviteToken();
+  const ws = await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: { shareTokenHash: tokenHash, shareEnabledAt: new Date() },
+    select: { shareEnabledAt: true },
+  });
+  return { token: raw, shareEnabledAt: ws.shareEnabledAt };
+};
+
+exports.disableShare = async (workspaceId, requesterId) => {
+  await assertOwner(workspaceId, requesterId);
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: { shareTokenHash: null, shareEnabledAt: null },
+  });
+};
+
+const STATUS_PAGE_TASK_LIMIT = 200;
+
+// Everything the public page may see, and nothing else: an allowlist built
+// field-by-field (like safeInviteFields), never a spread of a task row. No
+// ids, no assignees or other people, no descriptions, no comments or files —
+// just a title, a status and dates. The owner is warned in the UI that task
+// titles become public.
+exports.getStatusByToken = async (rawToken) => {
+  const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
+  const ws = await prisma.workspace.findUnique({
+    where: { shareTokenHash: tokenHash },
+    select: { id: true, name: true, icon: true },
+  });
+  // Unknown, rotated and disabled links are indistinguishable on purpose.
+  if (!ws) throw AppError.notFound('This status page is not available');
+
+  const [counts, tasks] = await Promise.all([
+    prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
+    prisma.task.findMany({
+      where: { workspaceId: ws.id },
+      select: { title: true, status: true, dueDate: true, completedAt: true },
+      // Enum order is todo → in_progress → done; undated tasks sort last.
+      orderBy: [{ status: 'asc' }, { dueDate: { sort: 'asc', nulls: 'last' } }],
+      take: STATUS_PAGE_TASK_LIMIT,
+    }),
+  ]);
+
+  const summary = { todo: 0, in_progress: 0, done: 0 };
+  for (const row of counts) summary[row.status] = row._count._all;
+  const total = summary.todo + summary.in_progress + summary.done;
+  const percent = total === 0 ? 0 : Math.round((summary.done / total) * 100);
+
+  return {
+    workspace: { name: ws.name, icon: ws.icon },
+    summary: { ...summary, total, percent },
+    tasks: tasks.map((t) => ({
+      title: t.title,
+      status: t.status,
+      dueDate: t.dueDate,
+      completedAt: t.completedAt,
+    })),
+    truncated: total > tasks.length,
+  };
 };

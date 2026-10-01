@@ -6,12 +6,10 @@ exports.getMomentum = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const requestedPeriod = momentumService.VALID_PERIODS.includes(req.query.period) ? req.query.period : 'week';
 
-  // `req.query.scope`/`workspaceId` are not read yet — Task has no
-  // workspaceId/assigneeId column, so there is nothing to scope a "team"
-  // view by. The response always says `scope: 'me'` (see momentum.service.js)
-  // so a client can tell it got the personal view rather than silently
-  // assuming its request was honored. Reading/validating those params lands
-  // with the Phase 2 schema addition.
+  // `req.query.scope`/`workspaceId` are not read: Momentum is deliberately the
+  // caller's own work across every workspace. The response always says
+  // `scope: 'me'` (see momentum.service.js) so a client can tell it got the
+  // personal view rather than silently assuming a team view was honored.
   const { timezone, isPro } = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true, isPro: true } });
 
   // Motive Pro gate: This week is free; Month/Quarter (and the deeper

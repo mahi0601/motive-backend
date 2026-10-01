@@ -3,7 +3,7 @@ const router = require('express').Router();
 const WorkspaceController = require('../controllers/workspace.controller');
 const auth = require('../middlewares/auth.middleware');
 const validate = require('../middlewares/validate.middleware');
-const { inviteRules, roleUpdateRules } = require('../validators/workspace.validator');
+const { inviteRules, roleUpdateRules, createWorkspaceRules } = require('../validators/workspace.validator');
 
 // Scoped to just create/resend — the two routes that can spam someone's
 // inbox. Reads and revoke/accept/decline are unaffected. Mirrors server.js's
@@ -20,7 +20,7 @@ const inviteLimiter = rateLimit({
 
 router.use(auth);
 router.get('/', WorkspaceController.list);
-router.post('/', WorkspaceController.create);
+router.post('/', createWorkspaceRules, validate, WorkspaceController.create);
 
 router.post('/:id/invites', inviteLimiter, inviteRules, validate, WorkspaceController.createInvite);
 router.get('/:id/invites', WorkspaceController.listInvites);
@@ -31,5 +31,9 @@ router.patch('/:id/members/:userId', roleUpdateRules, validate, WorkspaceControl
 router.delete('/:id/members/:userId', WorkspaceController.removeMember);
 router.post('/:id/transfer-ownership', WorkspaceController.transferOwnership);
 router.delete('/:id/leave', WorkspaceController.leaveWorkspace);
+
+// Owner-only public status link — POST enables or rotates, DELETE turns it off.
+router.post('/:id/share', WorkspaceController.enableShare);
+router.delete('/:id/share', WorkspaceController.disableShare);
 
 module.exports = router;

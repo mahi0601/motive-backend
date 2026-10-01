@@ -4,10 +4,12 @@
 // is active. R2 is the production-correct choice: Render's disk is
 // ephemeral and wiped on every deploy/restart, so local-disk uploads
 // silently vanish there. Local disk stays as the zero-setup dev default.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config/env');
 const logger = require('../config/logger');
+const { MIME_BY_EXTENSION, DOWNLOAD_ONLY_EXTENSIONS } = require('../utils/fileTypes');
 
 const R2_ENABLED = !!(
   config.r2.accountId &&
@@ -41,15 +43,29 @@ function getS3Client() {
   return s3Client;
 }
 
+// Uploaded files are served from public URLs (the browser loads them with
+// plain <img>/<a>, which can't send credentials cross-origin), so the
+// filename is the only thing keeping a file private. It must be unguessable:
+// a CSPRNG UUID, not a timestamp plus Math.random().
 function uniqueName(originalname) {
-  return `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(originalname)}`;
+  return `${crypto.randomUUID()}${path.extname(originalname).toLowerCase()}`;
 }
 
 // `file` is a multer memoryStorage file: { buffer, originalname, mimetype }.
-// `protocol`/`host` are only used for the local-disk URL shape (R2 URLs are
-// absolute regardless of which host served the upload request).
-exports.saveFile = async (file, { protocol, host } = {}) => {
+// `mimetype` is deliberately never read here — it's a header the uploading
+// client sets and fully controls, not something the server verified. The
+// stored Content-Type always comes from MIME_BY_EXTENSION, keyed by the
+// extension upload.middleware.js already validated — so `x.png` uploaded
+// with `Content-Type: text/html` is still stored (and served back) as
+// `image/png`, not HTML.
+exports.saveFile = async (file) => {
   const key = uniqueName(file.originalname);
+  const ext = path.extname(file.originalname).toLowerCase();
+  // Falls back to a generic binary type rather than trusting file.mimetype —
+  // reachable only if a caller bypasses upload.middleware.js's fileFilter,
+  // since every extension it allows has an entry here.
+  const contentType = MIME_BY_EXTENSION[ext] || 'application/octet-stream';
+  const contentDisposition = DOWNLOAD_ONLY_EXTENSIONS.has(ext) ? 'attachment' : undefined;
 
   if (R2_ENABLED) {
     const { PutObjectCommand } = require('@aws-sdk/client-s3');
@@ -58,14 +74,17 @@ exports.saveFile = async (file, { protocol, host } = {}) => {
         Bucket: config.r2.bucket,
         Key: key,
         Body: file.buffer,
-        ContentType: file.mimetype,
+        ContentType: contentType,
+        ...(contentDisposition ? { ContentDisposition: contentDisposition } : {}),
       })
     );
     return { url: `${config.r2.publicUrl.replace(/\/$/, '')}/${key}` };
   }
 
   fs.writeFileSync(path.join(UPLOAD_DIR, key), file.buffer);
-  return { url: `${protocol}://${host}/uploads/${key}` };
+  // Built from this API's own configured base URL, not the request's
+  // protocol/Host header — see config.publicApiUrl's own comment for why.
+  return { url: `${config.publicApiUrl}/uploads/${key}` };
 };
 
 // Best-effort delete, mirrors the old fire-and-forget disk cleanup — a
