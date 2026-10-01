@@ -6,7 +6,33 @@ on:
   pull_request:
     branches: [master]
 
+# A newer push to the same ref supersedes an in-flight run — but never cancel
+# a run on master, so a deploy that's already started isn't cut off mid-way.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
 jobs:
+  # Scans only the commits introduced by this push/PR (gitleaks-action
+  # computes that range itself per event type) — not the repo's full
+  # history. A real credential (a Neon connection string + JWT secret) was
+  # committed and later deleted in this repo's history before this job
+  # existed; a full-history scan would flag that forever even after
+  # rotation. Scanning only what's new is what actually prevents a repeat,
+  # without permanently red-X'ing CI over an already-handled leak.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks-action needs real history to diff the push/PR range against
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     runs-on: ubuntu-latest
     # A throwaway Postgres for the lifetime of this job only — not the dev
@@ -42,6 +68,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Non-blocking, deliberately: after `npm audit fix` the only advisories
+      # left are 3 high ones in the Prisma CLI chain (prisma → @prisma/config →
+      # deepmerge-ts). Clearing them needs a Prisma major upgrade (6 → 7),
+      # which is tracked separately. Make this blocking again once that lands,
+      # so new high/critical advisories fail the build.
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
       - run: npx prisma validate
       - run: npx prisma generate
       # Applies every committed migration to the fresh container above —
@@ -49,3 +82,37 @@ jobs:
       # not just that schema.prisma parses.
       - run: npx prisma migrate deploy
       - run: npm test
+
+  # Deploys only after every check above passed, and only for a push to master
+  # (never for a PR). render.yaml sets `autoDeploy: false`, so this job is the
+  # only thing that can ship — a red CI run can no longer reach production.
+  #
+  # Needs a repo secret RENDER_DEPLOY_HOOK_URL (Render → motive-api → Settings
+  # → Deploy Hook). The hook URL is a credential: keep it in GitHub secrets,
+  # never in the repo.
+  deploy:
+    needs: [secret-scan, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret is not set" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+      # Smoke check only: Render keeps serving the previous version until the
+      # new one is healthy, so a pass here means the service is up, not that
+      # the new build has finished rolling out.
+      - name: Smoke-check /api/health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS https://motive-api-u7xg.onrender.com/api/health; then exit 0; fi
+            sleep 20
+          done
+          echo "API did not become healthy in time" >&2
+          exit 1

@@ -13,7 +13,7 @@ services:
     buildCommand: npm ci && npx prisma migrate deploy
     startCommand: node src/index.js
     healthCheckPath: /api/health
-    autoDeploy: true
+    autoDeploy: false # deploys are triggered by the GitHub Actions `deploy` job after CI passes
     envVars:
       - key: NODE_ENV
         value: production
@@ -43,6 +43,7 @@ services:
       # (Developers → Webhooks → add endpoint https://<this-service>/api/payments/webhook).
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # Per-MONTH amounts (Motive Pro is a subscription now).
       - key: PRO_UPGRADE_PRICE_USD_CENTS
         value: "999"
       - key: PRO_UPGRADE_PRICE_INR_PAISE
