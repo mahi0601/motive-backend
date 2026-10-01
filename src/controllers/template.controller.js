@@ -10,6 +10,7 @@ exports.list = asyncHandler(async (req, res) => {
 exports.use = asyncHandler(async (req, res) => {
   const page = await TemplateService.use(req.params.id, req.user.id, {
     parentId: req.body.parentId || null,
+    workspaceId: req.body.workspaceId || undefined,
   });
   res.status(201).json({ success: true, page });
 });

@@ -12,6 +12,12 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, url });
 });
 
+// Stripe's hosted Customer Portal — update card, view invoices, cancel.
+exports.createPortalSession = asyncHandler(async (req, res) => {
+  const { url } = await PaymentService.createPortalSession(req.user.id);
+  res.status(200).json({ success: true, url });
+});
+
 // Fallback for the success-redirect: confirms (and backfills if needed)
 // isPro directly from Stripe, in case the webhook was delayed or dropped.
 exports.getCheckoutSession = asyncHandler(async (req, res) => {
