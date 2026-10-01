@@ -18,11 +18,12 @@ const mockRetrieve = jest.fn();
 const mockCreate = jest.fn();
 const mockPortalCreate = jest.fn();
 const mockSubRetrieve = jest.fn();
+const mockSubCancel = jest.fn();
 jest.mock('stripe', () =>
   jest.fn().mockImplementation(() => ({
     checkout: { sessions: { create: mockCreate, retrieve: mockRetrieve } },
     billingPortal: { sessions: { create: mockPortalCreate } },
-    subscriptions: { retrieve: mockSubRetrieve },
+    subscriptions: { retrieve: mockSubRetrieve, cancel: mockSubCancel },
   }))
 );
 
@@ -40,6 +41,7 @@ describe('payment.service', () => {
     mockCreate.mockReset();
     mockPortalCreate.mockReset();
     mockSubRetrieve.mockReset();
+    mockSubCancel.mockReset();
     jest.restoreAllMocks();
   });
 
@@ -423,5 +425,31 @@ describe('payment.service', () => {
       await paymentService.handleWebhookEvent(evt('checkout.session.completed', paidSession(user.id)));
       expect(await reload()).toMatchObject({ isPro: true, subscriptionStatus: 'active' });
     });
+  });
+});
+
+describe('cancelSubscriptionForUser (account deletion)', () => {
+  let u;
+  afterEach(async () => { if (u) await cleanupUsers(u); u = null; });
+
+  test('does nothing for a user with no subscription', async () => {
+    u = await makeUser('cancel-none');
+    await paymentService.cancelSubscriptionForUser(u.id);
+    expect(mockSubCancel).not.toHaveBeenCalled();
+  });
+
+  test('cancels a live subscription, treats "already gone" as success, and throws on any other Stripe error', async () => {
+    u = await makeUser('cancel-live', { isPro: true });
+    await prisma.user.update({ where: { id: u.id }, data: { stripeSubscriptionId: 'sub_live', subscriptionStatus: 'active' } });
+
+    mockSubCancel.mockResolvedValueOnce({});
+    await paymentService.cancelSubscriptionForUser(u.id);
+    expect(mockSubCancel).toHaveBeenCalledWith('sub_live');
+
+    mockSubCancel.mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'resource_missing' }));
+    await expect(paymentService.cancelSubscriptionForUser(u.id)).resolves.toBeUndefined();
+
+    mockSubCancel.mockRejectedValueOnce(new Error('stripe is down'));
+    await expect(paymentService.cancelSubscriptionForUser(u.id)).rejects.toMatchObject({ statusCode: 502 });
   });
 });

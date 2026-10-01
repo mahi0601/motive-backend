@@ -200,6 +200,24 @@ const processEvent = async (event) => {
   }
 };
 
+// Ends a user's subscription immediately, for account deletion. Throws when
+// Stripe can't confirm the cancellation, so the caller can refuse to delete the
+// account rather than leave a subscription billing nobody. An already-gone
+// subscription (Stripe's resource_missing) counts as cancelled.
+exports.cancelSubscriptionForUser = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { stripeSubscriptionId: true, subscriptionStatus: true },
+  });
+  if (!user?.stripeSubscriptionId || user.subscriptionStatus === 'canceled') return;
+  try {
+    await getStripe().subscriptions.cancel(user.stripeSubscriptionId);
+  } catch (err) {
+    if (err?.code === 'resource_missing') return;
+    throw new AppError('Could not cancel your subscription, so your account was not deleted. Try again, or contact support.', 502);
+  }
+};
+
 exports.handleWebhookEvent = async (event) => {
   // Idempotency: record the event id before doing anything else. Stripe
   // redelivers on timeout/non-2xx and can occasionally redeliver even after a

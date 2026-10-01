@@ -1,6 +1,9 @@
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const { comparePassword } = require('../utils/password.util');
+const paymentService = require('./payment.service');
+const storageService = require('./storage.service');
+const logger = require('../config/logger');
 
 // `hasPassword` tells the client which confirmation the delete-account flow
 // needs (password vs. typing the account email — see deleteAccount). Derived
@@ -71,6 +74,24 @@ exports.deleteAccount = async (userId, password, confirmEmail) => {
     );
   }
 
+  // Order matters. 1) Stop billing first and refuse to continue if that fails —
+  // deleting the account while Stripe keeps charging it is the one outcome that
+  // can't be walked back. 2) Remember which stored objects the cascade is about
+  // to orphan. 3) Delete the rows. 4) Only then remove the objects, best effort:
+  // the rows are already gone, so a storage hiccup must not fail the request.
+  await paymentService.cancelSubscriptionForUser(userId);
+
+  const files = await prisma.file.findMany({
+    where: { OR: [{ uploadedBy: userId }, { task: { userId } }, { task: { workspace: { ownerId: userId } } }] },
+    select: { url: true },
+  });
+
   await prisma.user.delete({ where: { id: userId } });
+  require('../sockets/revoke').disconnectUser(userId);
+
+  await Promise.allSettled(files.map((f) => storageService.deleteFile(f.url))).then((results) => {
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed) logger.warn('Some files could not be removed after account deletion', { failed, total: files.length });
+  });
   return { deleted: true };
 };
