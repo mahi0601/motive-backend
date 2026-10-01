@@ -17,10 +17,12 @@ jest.mock('../src/config/env', () => {
 const mockRetrieve = jest.fn();
 const mockCreate = jest.fn();
 const mockPortalCreate = jest.fn();
+const mockSubRetrieve = jest.fn();
 jest.mock('stripe', () =>
   jest.fn().mockImplementation(() => ({
     checkout: { sessions: { create: mockCreate, retrieve: mockRetrieve } },
     billingPortal: { sessions: { create: mockPortalCreate } },
+    subscriptions: { retrieve: mockSubRetrieve },
   }))
 );
 
@@ -37,6 +39,7 @@ describe('payment.service', () => {
     mockRetrieve.mockReset();
     mockCreate.mockReset();
     mockPortalCreate.mockReset();
+    mockSubRetrieve.mockReset();
     jest.restoreAllMocks();
   });
 
@@ -178,6 +181,7 @@ describe('payment.service', () => {
   describe('subscription lifecycle via webhooks', () => {
     test('a paid subscription checkout grants Pro and records the subscription — but not lifetime', async () => {
       user = await makeUser('sub-start');
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_123', status: 'active', metadata: { userId: user.id }, current_period_end: Math.floor(Date.now() / 1000) + 86400 });
       await paymentService.handleWebhookEvent(
         evt('checkout.session.completed', {
           mode: 'subscription',
@@ -363,6 +367,7 @@ describe('payment.service', () => {
   describe('reconcileSession — subscriptions', () => {
     test('a paid subscription session starts Pro without marking the user lifetime', async () => {
       user = await makeUser('reconcile-sub');
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_rec', status: 'active', metadata: { userId: user.id }, current_period_end: Math.floor(Date.now() / 1000) + 86400 });
       mockRetrieve.mockResolvedValue({
         mode: 'subscription',
         metadata: { userId: user.id },
@@ -373,6 +378,50 @@ describe('payment.service', () => {
       const result = await paymentService.reconcileSession('cs_sub', user.id);
       expect(result.isPro).toBe(true);
       expect(await reload()).toMatchObject({ isPro: true, proLifetime: false, subscriptionStatus: 'active' });
+    });
+  });
+
+  describe('replayed paid checkout sessions never override the live subscription', () => {
+    const paidSession = (userId) => ({
+      mode: 'subscription',
+      payment_status: 'paid',
+      metadata: { userId },
+      customer: 'cus_old',
+      subscription: 'sub_old',
+    });
+
+    test('an old paid session whose subscription is cancelled does not re-grant Pro (webhook replay)', async () => {
+      user = await makeUser('replay-webhook', { isPro: false });
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_old', status: 'canceled', metadata: { userId: user.id } });
+      await paymentService.handleWebhookEvent(evt('checkout.session.completed', paidSession(user.id)));
+      expect(await reload()).toMatchObject({ isPro: false, subscriptionStatus: 'canceled' });
+    });
+
+    test('revisiting the success_url session id after cancelling does not re-grant Pro (reconcile)', async () => {
+      user = await makeUser('replay-reconcile', { isPro: false });
+      mockRetrieve.mockResolvedValue(paidSession(user.id));
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_old', status: 'canceled', metadata: { userId: user.id } });
+      const result = await paymentService.reconcileSession('cs_old', user.id);
+      expect(result.isPro).toBe(false);
+      expect(await reload()).toMatchObject({ isPro: false, subscriptionStatus: 'canceled' });
+    });
+
+    test('subscription.deleted followed by a late checkout.session.completed stays not-Pro', async () => {
+      user = await makeUser('replay-order', { isPro: true });
+      await paymentService.handleWebhookEvent(
+        evt('customer.subscription.deleted', { id: 'sub_old', status: 'canceled', metadata: { userId: user.id } })
+      );
+      expect((await reload()).isPro).toBe(false);
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_old', status: 'canceled', metadata: { userId: user.id } });
+      await paymentService.handleWebhookEvent(evt('checkout.session.completed', paidSession(user.id)));
+      expect((await reload()).isPro).toBe(false);
+    });
+
+    test('a still-active subscription is Pro, and a grandfathered lifetime user stays Pro', async () => {
+      user = await makeUser('replay-active', { isPro: false });
+      mockSubRetrieve.mockResolvedValue({ id: 'sub_old', status: 'active', metadata: { userId: user.id } });
+      await paymentService.handleWebhookEvent(evt('checkout.session.completed', paidSession(user.id)));
+      expect(await reload()).toMatchObject({ isPro: true, subscriptionStatus: 'active' });
     });
   });
 });

@@ -127,20 +127,23 @@ const asId = (value) => (typeof value === 'string' ? value : value?.id);
 // the migration.
 const applyPaidCheckoutSession = async (session, userId) => {
   const customerId = asId(session.customer);
-  const base = { isPro: true, ...(customerId ? { stripeCustomerId: customerId } : {}) };
 
   if (session.mode === 'subscription') {
     const subscriptionId = asId(session.subscription);
-    // updateMany (not update) so a stale/forged webhook userId no-ops instead of throwing.
-    await prisma.user.updateMany({
-      where: { id: userId },
-      data: {
-        ...base,
-        ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-        subscriptionStatus: 'active',
-      },
-    });
+    if (!subscriptionId) return; // a paid subscription session always has one; nothing to verify against
+    // A paid Checkout Session never stops being "paid", even after the
+    // subscription it created is cancelled — so it says nothing about the
+    // CURRENT entitlement. Replaying it (a late webhook, or the success_url
+    // ?session_id=… revisited after cancelling) must not hand Pro back, so the
+    // live subscription decides, never the session.
+    const subscription = await getStripe().subscriptions.retrieve(subscriptionId);
+    if (customerId) {
+      // updateMany so a stale/forged userId no-ops instead of throwing.
+      await prisma.user.updateMany({ where: { id: userId }, data: { stripeCustomerId: customerId } });
+    }
+    await applySubscription(subscription, 'checkout', userId);
   } else {
+    const base = { isPro: true, ...(customerId ? { stripeCustomerId: customerId } : {}) };
     await prisma.user.updateMany({ where: { id: userId }, data: { ...base, proLifetime: true } });
   }
 };
@@ -148,8 +151,8 @@ const applyPaidCheckoutSession = async (session, userId) => {
 // Keeps isPro, status and period end in step with the subscription's real
 // state. `isPro` is recomputed from proLifetime, so a grandfathered user
 // whose (accidental) subscription ends stays Pro.
-const applySubscription = async (subscription, eventType) => {
-  const userId = subscription.metadata?.userId;
+const applySubscription = async (subscription, eventType, knownUserId) => {
+  const userId = knownUserId || subscription.metadata?.userId;
   const where = userId ? { id: userId } : { stripeSubscriptionId: subscription.id };
   const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true } });
   if (!user) return; // not one of ours (or already deleted) — nothing to update
@@ -238,5 +241,6 @@ exports.reconcileSession = async (sessionId, userId) => {
   }
 
   await applyPaidCheckoutSession(session, userId);
-  return { isPro: true, paymentStatus: session.payment_status };
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { isPro: true } });
+  return { isPro: !!user?.isPro, paymentStatus: session.payment_status };
 };
