@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const validator = require('validator');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const config = require('../config/env');
@@ -89,18 +90,38 @@ exports.loginWithGoogle = async (code) => {
     throw AppError.unauthorized('Your Google email address is not verified.');
   }
 
-  let user = await prisma.user.findUnique({ where: { email: profile.email } });
+  // 1. Already linked → that account, whatever its email is now.
+  let user = await prisma.user.findUnique({ where: { googleId: profile.id } });
+  if (!user) {
+    // 2. Same address as an existing account. Registration stores the
+    //    validator-normalized email (Gmail dots/plus-tags folded), so look that
+    //    form up too — otherwise `Dot.ty@gmail.com` creates a second account
+    //    next to `dotty@gmail.com`. The raw form catches rows from before.
+    const normalized = validator.normalizeEmail(profile.email) || profile.email;
+    user = await prisma.user.findFirst({ where: { email: { in: [...new Set([normalized, profile.email])] } } });
+  }
+
   if (!user) {
     user = await prisma.user.create({
       data: {
         name: profile.name || profile.email.split('@')[0],
-        email: profile.email,
+        email: validator.normalizeEmail(profile.email) || profile.email,
         googleId: profile.id,
         avatar: profile.picture || '',
       },
     });
   } else if (!user.googleId) {
-    user = await prisma.user.update({ where: { id: user.id }, data: { googleId: profile.id } });
+    // Linking to an account that already existed. Anyone can register an
+    // address they don't own, with a password they chose; the real owner then
+    // proves ownership through Google. If that password survived, the person
+    // who registered first would keep a working login into the owner's
+    // account. So the password is removed (the owner can set a new one with
+    // "forgot password") and tokenVersion is bumped to kill any session or
+    // refresh token already issued for it.
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { googleId: profile.id, password: null, tokenVersion: { increment: 1 } },
+    });
   }
 
   return result(user);
