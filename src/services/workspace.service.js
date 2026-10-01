@@ -163,14 +163,17 @@ exports.canAccess = async (workspaceId, userId, need = 'read') => {
 };
 
 // The access rule every owned resource shares — Task (`userId`), Page
-// (`ownerId`) and, through its page, Block: the creator always has access;
+// (`ownerId`) and, through its page, Block: the creator has access to a personal item (no workspace);
 // anyone else needs a workspace role sufficient for `need`. Throws a 404
 // (never a 403) with `notFoundMessage`, so a non-member can't tell a resource
 // they can't reach from one that doesn't exist. `resource` is any row with
 // `{ ownerId | userId, workspaceId }`.
 exports.assertResourceAccess = async (resource, userId, need, notFoundMessage) => {
   const creatorId = 'ownerId' in resource ? resource.ownerId : resource.userId;
-  if (creatorId === userId) return;
+  // Personal items (no workspace) always belong to their creator. In a
+  // workspace, authorship is not access: someone removed from it must not keep
+  // reaching what they created there, so a creator is checked like anyone else.
+  if (creatorId === userId && !resource.workspaceId) return;
   if (!(await exports.canAccess(resource.workspaceId, userId, need))) {
     throw AppError.notFound(notFoundMessage);
   }
