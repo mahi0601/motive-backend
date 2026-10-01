@@ -75,8 +75,21 @@ model User {
   // Bumped on logout / password change to invalidate all outstanding refresh tokens.
   tokenVersion     Int      @default(0)
   // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed.
+  // `isPro` is the ONE effective flag every gate reads (member cap, Momentum
+  // periods, the UI). It is derived: `proLifetime || an active subscription`.
+  // proLifetime marks the original one-time purchase (and was backfilled for
+  // everyone who had isPro when subscriptions launched), so those users stay
+  // Pro forever regardless of any subscription's lifecycle.
   isPro            Boolean  @default(false)
+  proLifetime      Boolean  @default(false)
   stripeCustomerId String?
+  // Monthly subscription state, kept in sync by Stripe webhooks (see
+  // payment.service.js). stripeSubscriptionId is globally omitted from queries
+  // (config/prisma.js) — the client never needs it.
+  stripeSubscriptionId         String?   @unique
+  subscriptionStatus           String?   // Stripe's status: active, trialing, past_due, unpaid, canceled, …
+  proPeriodEnd                 DateTime? // end of the paid period — "renews on" / "ends on"
+  subscriptionCancelAtPeriodEnd Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -103,6 +116,13 @@ model Workspace {
   invites   WorkspaceInvite[]
   pages     Page[]
   tasks     Task[]
+  // Public client status page (GET /api/status/:token). Only the sha256 of
+  // the share token is stored — same pattern as WorkspaceInvite.tokenHash —
+  // so a database read can't reveal a working link. `shareEnabledAt` is what
+  // the UI reads to know sharing is on (the hash itself is globally omitted
+  // from queries, see config/prisma.js); both are null when sharing is off.
+  shareTokenHash String?   @unique
+  shareEnabledAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -324,6 +344,11 @@ model ActivityLog {
 model NativeExchangeCode {
   code      String   @id
   userId    String
+  // PKCE (RFC 7636, S256): base64url(sha256(code_verifier)) supplied by the
+  // app when it started sign-in. The exchange must present the matching
+  // verifier, so another app that registers the same custom URL scheme and
+  // intercepts the deep link still can't redeem the code.
+  codeChallenge String
   expiresAt DateTime
   createdAt DateTime @default(now())
 }
