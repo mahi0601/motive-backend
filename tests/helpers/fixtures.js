@@ -20,7 +20,9 @@ const testEmail = (label) => `test-${RUN_ID}-${counter++}-${label}@example.inval
 
 async function makeUser(label, overrides = {}) {
   return prisma.user.create({
-    data: { name: `Test ${label}`, email: testEmail(label), password: null, ...overrides },
+    // Verified by default, since most tests are not about verification; pass
+    // `emailVerifiedAt: null` to get an unproven account.
+    data: { name: `Test ${label}`, email: testEmail(label), password: null, emailVerifiedAt: new Date(), ...overrides },
   });
 }
 

@@ -13,6 +13,7 @@ const prisma = require('./config/prisma');
 const routes = require('./routes/index');
 const { enabled: sentryEnabled, Sentry } = require('./config/sentry');
 const logger = require('./config/logger');
+const requestContext = require('./utils/requestContext');
 const errorHandler = require('./middlewares/error.middleware');
 const paymentController = require('./controllers/payment.controller');
 const { DOWNLOAD_ONLY_EXTENSIONS } = require('./utils/fileTypes');
@@ -58,6 +59,7 @@ app.use(cookieParser());
 // webhook route above, same as morgan was, so that request's body is never
 // logged either.
 app.use(logger.createHttpLogger());
+app.use(requestContext.middleware);
 
 // Serve uploaded attachments. The frontend and API are on different origins
 // (even in prod: motive-app-*.onrender.com vs motive-api-*.onrender.com), and
