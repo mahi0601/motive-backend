@@ -292,6 +292,9 @@ model File {
   id         String   @id @default(cuid())
   name       String
   url        String
+  // Bytes. Counted toward the uploader's storage quota; files uploaded before
+  // quotas existed have 0 and so are not counted.
+  size       Int      @default(0)
   uploadedBy String
   uploader   User     @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
   taskId     String?
