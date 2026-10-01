@@ -67,6 +67,12 @@ model User {
   // Set the first time a user signs in with Google — also used to link an
   // existing password-based account by matching email on first Google login.
   googleId         String?  @unique
+  // When this account proved it controls `email` (Google sign-in, completing a
+  // password reset, accepting an invite sent to it, or clicking the emailed
+  // verification link). Null = unproven. Sign-in is never blocked on it; it
+  // gates things that can be abused from a throwaway account (sending invites)
+  // and decides whether linking Google may keep an existing password.
+  emailVerifiedAt  DateTime?
   avatar           String   @default("")
   // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
   // endpoint's week/month/quarter ranges in the user's own day, instead of
@@ -104,6 +110,7 @@ model User {
   notifications   Notification[]
   activityLogs    ActivityLog[]
   templates       Template[]
+  sessions        Session[]
 }
 
 model Workspace {
@@ -123,10 +130,45 @@ model Workspace {
   // from queries, see config/prisma.js); both are null when sharing is off.
   shareTokenHash String?   @unique
   shareEnabledAt DateTime?
+  // What the owner chooses to show on that public page. All of it is PUBLIC to
+  // anyone with the link, plain text only (length limits are enforced in
+  // validators/workspace.validator.js). `statusAccent` is a key from
+  // utils/statusAccents.js, never a free colour value. Hiding the "Powered by
+  // Motive" footer is a Pro feature, checked on write and again when served.
+  statusHeadline     String?
+  statusSummary      String?
+  milestoneTitle     String?
+  milestoneDate      DateTime?
+  statusAccent       String   @default("teal")
+  statusHideBranding Boolean  @default(false)
+  // Whether the public page offers the "approve / request changes / comment"
+  // form. Off by default: turning it on opens an unauthenticated write
+  // endpoint, so the owner opts in.
+  statusAllowFeedback Boolean @default(false)
+  feedback           ClientFeedback[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([ownerId])
+}
+
+// Something a client sent from the public status page (see feedback.service.js).
+// The sender is whoever holds the link: `authorName` is whatever they typed and
+// is NOT verified. `milestoneTitle` is a snapshot of the milestone at the time,
+// so the history still makes sense after the owner edits it. Plain text only.
+// Pruned after a year by jobs/cleanup.js.
+model ClientFeedback {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind           String // 'comment' | 'approve' | 'changes'
+  authorName     String
+  message        String    @default("")
+  milestoneTitle String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
 }
 
 // Mongo's embedded `members[]` subdocument becomes a join table.
@@ -291,6 +333,9 @@ model File {
   id         String   @id @default(cuid())
   name       String
   url        String
+  // Bytes. Counted toward the uploader's storage quota; files uploaded before
+  // quotas existed have 0 and so are not counted.
+  size       Int      @default(0)
   uploadedBy String
   uploader   User     @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
   taskId     String?
@@ -351,6 +396,57 @@ model NativeExchangeCode {
   codeChallenge String
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+// One row per login (browser, device, app). The refresh token carries this id
+// plus `gen`, a counter bumped on every rotation:
+//   - token gen == row gen        → valid; rotate (gen + 1)
+//   - token gen == row gen - 1    → the previous token, replayed within a short
+//                                   grace window (two tabs refreshing at once):
+//                                   answer with the current generation, no bump
+//   - anything older, or after the window → a stolen/replayed token: the whole
+//                                   session is revoked
+// Logout revokes one session; tokenVersion on User still means "log out
+// everywhere". Access tokens carry `sid` and are checked against this row, so
+// a revoked session stops working immediately instead of at token expiry.
+model Session {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gen               Int       @default(0)
+  prevGenValidUntil DateTime?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  // sha256 prefix of the User-Agent — enough to tell sessions apart in a
+  // future "your devices" list without storing the raw string.
+  uaHash            String?
+  createdAt         DateTime  @default(now())
+  lastUsedAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Append-only record of security-relevant events (sign-ins, credential and
+// membership changes, billing changes, deletions) for incident response.
+// Deliberately has NO foreign keys: it must survive the deletion of the user or
+// workspace it describes (an `account_deleted` row is the whole point), and it
+// stores ids, never emails or names. `ip` is truncated to a /24 (IPv4) or /48
+// (IPv6) before it is written. Pruned after 180 days by jobs/cleanup.js.
+model SecurityEvent {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  type         String
+  actorId      String?
+  targetUserId String?
+  workspaceId  String?
+  ip           String?
+  meta         Json?
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([actorId, createdAt])
+  @@index([targetUserId, createdAt])
 }
 
 // Idempotency ledger for Stripe webhooks — Stripe redelivers events on any

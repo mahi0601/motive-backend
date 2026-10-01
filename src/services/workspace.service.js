@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
+const audit = require('./audit.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
@@ -7,6 +8,7 @@ const config = require('../config/env');
 // Free tier: owner + 1 invited teammate (2 members total). Motive Pro
 // removes the cap — the first thing `isPro` actually gates.
 const FREE_MEMBER_LIMIT = 2;
+const DAILY_INVITE_LIMIT = 20;
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -197,10 +199,31 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   const ws = await assertOwner(workspaceId, requesterId);
   const normalizedEmail = email.toLowerCase();
 
-  const requester = await prisma.user.findUnique({ where: { id: requesterId }, select: { name: true, isPro: true } });
+  const requester = await prisma.user.findUnique({
+    where: { id: requesterId },
+    select: { name: true, isPro: true, emailVerifiedAt: true },
+  });
+  // Invites send email from Motive's address to arbitrary people, so they are
+  // the thing a throwaway account would abuse; require a proven address first.
+  if (!requester.emailVerifiedAt) {
+    throw AppError.forbidden('Verify your email address before inviting people — check your inbox for the confirmation link.');
+  }
+  const sentToday = await prisma.workspaceInvite.count({
+    where: { invitedById: requesterId, updatedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+  });
+  if (sentToday >= DAILY_INVITE_LIMIT) {
+    throw new AppError('You have reached the daily invite limit — try again tomorrow.', 429);
+  }
   if (!requester.isPro) {
-    const memberCount = await prisma.workspaceMember.count({ where: { workspaceId } });
-    if (memberCount >= FREE_MEMBER_LIMIT) {
+    // Pending invites hold a seat too, or a free workspace could queue up any
+    // number of invites and only hit the limit as they are accepted.
+    const [memberCount, pendingElsewhere] = await Promise.all([
+      prisma.workspaceMember.count({ where: { workspaceId } }),
+      prisma.workspaceInvite.count({
+        where: { workspaceId, status: 'pending', expiresAt: { gt: new Date() }, email: { not: normalizedEmail } },
+      }),
+    ]);
+    if (memberCount + pendingElsewhere >= FREE_MEMBER_LIMIT) {
       throw AppError.paymentRequired(
         `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Motive Pro to invite more.`
       );
@@ -237,6 +260,7 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   });
 
   await sendInviteEmail(invite, ws, requester.name, raw);
+  await audit.record({ type: 'invite_created', actorId: requesterId, workspaceId, meta: { role } });
   return safeInviteFields(invite);
 };
 
@@ -313,7 +337,21 @@ const findInviteForResponse = async (rawToken, userEmail) => {
 // null when the invite was already fulfilled (nothing new to tell anyone).
 exports.acceptInvite = async (rawToken, userId, userEmail) => {
   const invite = await findInviteForResponse(rawToken, userEmail);
-  return prisma.$transaction(async (tx) => {
+
+  // The seat limit is checked again here, not only when the invite was sent: the
+  // workspace may have filled up, or the owner's Pro may have ended, since.
+  const [inviteWorkspace, existingMembership] = await Promise.all([
+    prisma.workspace.findUnique({ where: { id: invite.workspaceId }, select: { owner: { select: { isPro: true } } } }),
+    prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } } }),
+  ]);
+  if (!existingMembership && inviteWorkspace && !inviteWorkspace.owner.isPro) {
+    const memberCount = await prisma.workspaceMember.count({ where: { workspaceId: invite.workspaceId } });
+    if (memberCount >= FREE_MEMBER_LIMIT) {
+      throw AppError.paymentRequired('This workspace has reached its member limit — ask its owner to upgrade to Motive Pro.');
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
     const alreadyMember = await tx.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } },
     });
@@ -321,6 +359,8 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
       await tx.workspaceMember.create({ data: { workspaceId: invite.workspaceId, userId, role: invite.role } });
     }
     await tx.workspaceInvite.update({ where: { id: invite.id }, data: { status: 'accepted' } });
+    // The token only went to this address, so holding it proves the address.
+    await tx.user.updateMany({ where: { id: userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } });
 
     const [workspace, accepter] = await Promise.all([
       tx.workspace.findUnique({ where: { id: invite.workspaceId } }),
@@ -340,6 +380,8 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
     }
     return { workspace, notification };
   });
+  await audit.record({ type: 'invite_accepted', actorId: userId, workspaceId: invite.workspaceId, meta: { role: invite.role } });
+  return result;
 };
 
 exports.declineInvite = async (rawToken, userId, userEmail) => {
@@ -356,6 +398,8 @@ exports.updateMemberRole = async (workspaceId, memberUserId, role, requesterId) 
     data: { role },
     include: { user: { select: { id: true, name: true, email: true } } },
   });
+  await audit.record({ type: 'role_changed', actorId: requesterId, targetUserId: memberUserId, workspaceId, meta: { role } });
+  await require('../sockets/revoke').recheckUserAccess(memberUserId);
   return member;
 };
 
@@ -363,6 +407,8 @@ exports.removeMember = async (workspaceId, memberUserId, requesterId) => {
   const ws = await assertOwner(workspaceId, requesterId);
   if (memberUserId === ws.ownerId) throw AppError.badRequest("Can't remove the workspace owner");
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId: memberUserId } } });
+  await audit.record({ type: 'member_removed', actorId: requesterId, targetUserId: memberUserId, workspaceId });
+  await require('../sockets/revoke').recheckUserAccess(memberUserId);
 };
 
 // getRole derives 'owner' from Workspace.ownerId directly, not from a
@@ -389,6 +435,8 @@ exports.transferOwnership = async (workspaceId, newOwnerUserId, requesterId) => 
       data: { role: 'owner' },
     }),
   ]);
+  await audit.record({ type: 'ownership_transferred', actorId: requesterId, targetUserId: newOwnerUserId, workspaceId });
+  await require('../sockets/revoke').recheckUserAccess(requesterId);
 };
 
 // Self-service, deliberately not a special case bolted onto removeMember —
@@ -405,6 +453,8 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
   });
   if (!membership) throw AppError.notFound('Not a member of this workspace');
   await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId, userId } } });
+  await audit.record({ type: 'member_left', actorId: userId, targetUserId: userId, workspaceId });
+  await require('../sockets/revoke').recheckUserAccess(userId);
 };
 
 // ── Public client status page ───────────────────────────
@@ -422,6 +472,7 @@ exports.enableShare = async (workspaceId, requesterId) => {
     data: { shareTokenHash: tokenHash, shareEnabledAt: new Date() },
     select: { shareEnabledAt: true },
   });
+  await audit.record({ type: 'share_link_enabled', actorId: requesterId, workspaceId });
   return { token: raw, shareEnabledAt: ws.shareEnabledAt };
 };
 
@@ -431,6 +482,47 @@ exports.disableShare = async (workspaceId, requesterId) => {
     where: { id: workspaceId },
     data: { shareTokenHash: null, shareEnabledAt: null },
   });
+  await audit.record({ type: 'share_link_disabled', actorId: requesterId, workspaceId });
+};
+
+// Owner-only edit of what the public status page says about the project. See
+// the Workspace model for what each field is. Only fields present in `input`
+// are touched; '' (or null for the date) clears one. Hiding the "Powered by
+// Motive" footer needs Pro: refused here for a free owner, and the public read
+// below re-checks it so a lapsed Pro brings the footer back without a write.
+exports.assertOwner = (...args) => assertOwner(...args);
+
+exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
+  await assertOwner(workspaceId, requesterId);
+
+  const text = (v) => (v === undefined ? undefined : v === null || v === '' ? null : String(v).trim() || null);
+  const data = {
+    statusHeadline: text(input.headline),
+    statusSummary: text(input.summary),
+    milestoneTitle: text(input.milestoneTitle),
+    milestoneDate:
+      input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
+    statusAccent: input.accent,
+    statusHideBranding: input.hideBranding,
+    statusAllowFeedback: input.allowFeedback,
+  };
+  for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
+
+  if (data.statusHideBranding === true) {
+    const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
+    if (!owner?.isPro) {
+      throw AppError.paymentRequired('Hiding "Powered by Motive" is part of Motive Pro.');
+    }
+  }
+
+  const ws = await prisma.workspace.update({
+    where: { id: workspaceId },
+    data,
+    select: { statusHeadline: true, statusSummary: true, milestoneTitle: true, milestoneDate: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true },
+  });
+  // Which fields changed, never what they say.
+  await audit.record({ type: 'status_page_updated', actorId: requesterId, workspaceId, meta: { fields: Object.keys(data).join(',') } });
+  return ws;
 };
 
 const STATUS_PAGE_TASK_LIMIT = 200;
@@ -444,7 +536,19 @@ exports.getStatusByToken = async (rawToken) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
-    select: { id: true, name: true, icon: true },
+    select: {
+      id: true,
+      name: true,
+      icon: true,
+      statusHeadline: true,
+      statusSummary: true,
+      milestoneTitle: true,
+      milestoneDate: true,
+      statusAccent: true,
+      statusHideBranding: true,
+      statusAllowFeedback: true,
+      owner: { select: { isPro: true } },
+    },
   });
   // Unknown, rotated and disabled links are indistinguishable on purpose.
   if (!ws) throw AppError.notFound('This status page is not available');
@@ -467,6 +571,15 @@ exports.getStatusByToken = async (rawToken) => {
 
   return {
     workspace: { name: ws.name, icon: ws.icon },
+    page: {
+      headline: ws.statusHeadline,
+      summary: ws.statusSummary,
+      milestone: ws.milestoneTitle ? { title: ws.milestoneTitle, date: ws.milestoneDate } : null,
+      accent: ws.statusAccent,
+      // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
+      hideBranding: ws.statusHideBranding && ws.owner.isPro,
+      allowFeedback: ws.statusAllowFeedback,
+    },
     summary: { ...summary, total, percent },
     tasks: tasks.map((t) => ({
       title: t.title,

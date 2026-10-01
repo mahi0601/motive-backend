@@ -27,3 +27,5 @@ exports.resetPasswordRules = [
     .matches(/\d/)
     .withMessage('Password must contain a number'),
 ];
+
+exports.verifyEmailRules = [body('token').isString().notEmpty().withMessage('Confirmation token is required')];

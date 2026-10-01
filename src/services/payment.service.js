@@ -2,6 +2,7 @@ const Stripe = require('stripe');
 const config = require('../config/env');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
+const audit = require('./audit.service');
 
 // Lazily constructed — throws only when a payment route is actually hit without
 // keys configured, instead of crashing the whole app at boot.
@@ -154,11 +155,15 @@ const applyPaidCheckoutSession = async (session, userId) => {
 const applySubscription = async (subscription, eventType, knownUserId) => {
   const userId = knownUserId || subscription.metadata?.userId;
   const where = userId ? { id: userId } : { stripeSubscriptionId: subscription.id };
-  const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true } });
+  const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true, isPro: true } });
   if (!user) return; // not one of ours (or already deleted) — nothing to update
 
   const ended = eventType === 'customer.subscription.deleted' || subscription.status === 'canceled';
   const status = ended ? 'canceled' : subscription.status;
+  const nextIsPro = user.proLifetime || (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status));
+  if (nextIsPro !== user.isPro) {
+    await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: nextIsPro, status } });
+  }
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -197,6 +202,24 @@ const processEvent = async (event) => {
         data: { subscriptionStatus: 'past_due' },
       });
     }
+  }
+};
+
+// Ends a user's subscription immediately, for account deletion. Throws when
+// Stripe can't confirm the cancellation, so the caller can refuse to delete the
+// account rather than leave a subscription billing nobody. An already-gone
+// subscription (Stripe's resource_missing) counts as cancelled.
+exports.cancelSubscriptionForUser = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { stripeSubscriptionId: true, subscriptionStatus: true },
+  });
+  if (!user?.stripeSubscriptionId || user.subscriptionStatus === 'canceled') return;
+  try {
+    await getStripe().subscriptions.cancel(user.stripeSubscriptionId);
+  } catch (err) {
+    if (err?.code === 'resource_missing') return;
+    throw new AppError('Could not cancel your subscription, so your account was not deleted. Try again, or contact support.', 502);
   }
 };
 

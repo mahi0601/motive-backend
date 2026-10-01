@@ -15,7 +15,8 @@ describe('invite email header', () => {
   let sendEmail;
 
   beforeAll(async () => {
-    owner = await makeUser('inviteEmailOwner');
+    // Pro, so the free-seat limit (which counts pending invites) does not get in the way of an email-content test.
+    owner = await makeUser('inviteEmailOwner', { isPro: true });
     workspace = await makeWorkspaceWithMembers(owner);
   });
 

@@ -3,7 +3,7 @@ const router = require('express').Router();
 const WorkspaceController = require('../controllers/workspace.controller');
 const auth = require('../middlewares/auth.middleware');
 const validate = require('../middlewares/validate.middleware');
-const { inviteRules, roleUpdateRules, createWorkspaceRules } = require('../validators/workspace.validator');
+const { inviteRules, roleUpdateRules, createWorkspaceRules, statusPageRules } = require('../validators/workspace.validator');
 
 // Scoped to just create/resend — the two routes that can spam someone's
 // inbox. Reads and revoke/accept/decline are unaffected. Mirrors server.js's
@@ -35,5 +35,11 @@ router.delete('/:id/leave', WorkspaceController.leaveWorkspace);
 // Owner-only public status link — POST enables or rotates, DELETE turns it off.
 router.post('/:id/share', WorkspaceController.enableShare);
 router.delete('/:id/share', WorkspaceController.disableShare);
+// Owner-only inbox for what clients send from the public page.
+router.get('/:id/feedback', WorkspaceController.listFeedback);
+router.patch('/:id/feedback/:feedbackId/read', WorkspaceController.markFeedbackRead);
+router.delete('/:id/feedback/:feedbackId', WorkspaceController.deleteFeedback);
+// Owner-only: what the public page says about the project (headline, summary, milestone, accent).
+router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
 
 module.exports = router;

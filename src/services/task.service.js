@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const activityLog = require('./activityLog.service');
 const workspaceService = require('./workspace.service');
+const storageService = require('./storage.service');
 const { escapeLike } = require('../utils/like');
 
 // Paginated, indexed read — scales to large task counts per user.
@@ -251,7 +252,11 @@ exports.remove = async (id, userId) => {
   const existing = await prisma.task.findUnique({ where: { id }, select: { userId: true, workspaceId: true, title: true } });
   if (!existing) throw AppError.notFound('Task not found');
   await workspaceService.assertResourceAccess(existing, userId, 'write', 'Task not found');
+  const files = await prisma.file.findMany({ where: { taskId: id }, select: { url: true } });
   await prisma.task.delete({ where: { id } });
+  // The File rows went with the task (cascade); remove the stored objects too,
+  // best effort, so deleted attachments don't linger in the bucket.
+  files.forEach((f) => storageService.deleteFile(f.url).catch(() => {}));
   activityLog.log('deleted', userId, { description: `Deleted "${existing.title}"` });
   return { deleted: true };
 };

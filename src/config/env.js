@@ -94,7 +94,12 @@ const config = {
 // identical copy of this check against `corsOrigins`.
 config.corsOriginCheck = (origin, cb) => {
   if (!origin || config.corsOrigins.includes(origin)) return cb(null, true);
-  return cb(new Error(`CORS blocked for origin: ${origin}`));
+  // A plain Error would surface as a 500 (and page Sentry) for what is just a
+  // disallowed caller; mark it as the client error it is.
+  const err = new Error(`CORS blocked for origin: ${origin}`);
+  err.statusCode = 403;
+  err.isOperational = true;
+  return cb(err);
 };
 
 // This API's own public base URL — used to build absolute links that must

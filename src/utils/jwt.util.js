@@ -4,22 +4,20 @@ const config = require('../config/env');
 // No insecure fallback secret — config.js guarantees JWT_SECRET exists at boot.
 // A `type` claim distinguishes access vs refresh tokens so one can't be used as the other.
 
-exports.signAccessToken = (userId) =>
-  jwt.sign({ id: userId, type: 'access' }, config.jwt.secret, {
+// `sid` ties the token to a Session row (services/session.service.js) and
+// `ver` to the user's tokenVersion, so revoking either one invalidates the
+// token immediately instead of when it expires.
+exports.signAccessToken = (userId, { sid, ver } = {}) =>
+  jwt.sign({ id: userId, type: 'access', sid, ver }, config.jwt.secret, {
     expiresIn: config.jwt.accessExpiresIn,
   });
 
-// `csrf` is a random nonce, opaque to the client except that the exact same
-// value is handed back to it once, in the JSON body of whichever call
-// issued this token (see token.service.js#issueTokens) — never in a
-// cookie. That split is what makes it a working CSRF defense even though
-// the frontend and API are on different origins in production: a
-// cross-site forged request gets the httpOnly refresh cookie attached
-// automatically by the browser, but has no way to also know this value, so
-// it can't produce a matching X-CSRF-Token header. See
-// auth.service.js#refresh/#logout for where it's actually checked.
-exports.signRefreshToken = (userId, tokenVersion, csrf) =>
-  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion, csrf }, config.jwt.secret, {
+// Refresh token = which session (`sid`) and which rotation of it (`gen`).
+// Only the httpOnly cookie ever holds it. Rotation, reuse detection and the
+// cross-site defence for the endpoints that read it are explained in
+// session.service.js and middlewares/sameSite.middleware.js.
+exports.signRefreshToken = (userId, tokenVersion, sid, gen) =>
+  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion, sid, gen }, config.jwt.secret, {
     expiresIn: config.jwt.refreshExpiresIn,
   });
 
@@ -31,6 +29,14 @@ exports.signRefreshToken = (userId, tokenVersion, csrf) =>
 exports.signResetToken = (userId, tokenVersion) =>
   jwt.sign({ id: userId, type: 'reset', ver: tokenVersion }, config.jwt.secret, {
     expiresIn: '30m',
+  });
+
+// Email-verification link. Bound to the address it was sent to, so it cannot
+// verify a different address if the account's email ever changes, and it is
+// useless for anything else (every consumer checks `type`).
+exports.signVerifyToken = (userId, email) =>
+  jwt.sign({ id: userId, type: 'verify', email: String(email).toLowerCase() }, config.jwt.secret, {
+    expiresIn: '24h',
   });
 
 // Throws on invalid/expired tokens; the error middleware maps it to 401.

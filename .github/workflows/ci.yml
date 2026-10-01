@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches: [master]
-  pull_request:
-    branches: [master]
+  pull_request: # any base branch, so stacked PRs are checked too
 
 # A newer push to the same ref supersedes an in-flight run — but never cancel
 # a run on master, so a deploy that's already started isn't cut off mid-way.
@@ -26,12 +25,13 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # gitleaks-action needs real history to diff the push/PR range against
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
 
   build:
     runs-on: ubuntu-latest
@@ -61,10 +61,10 @@ jobs:
       # existing the moment the job ends.
       JWT_SECRET: ci-only-dummy-secret-0000000000000000000000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint

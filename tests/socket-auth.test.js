@@ -12,7 +12,7 @@
 const { handshakeAuth, handlePageJoin } = require('../src/sockets/socket.handler');
 const { signAccessToken, signRefreshToken } = require('../src/utils/jwt.util');
 const pageService = require('../src/services/page.service');
-const { makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
+const { accessTokenFor, makeUser, makeWorkspaceWithMembers, cleanupUsers } = require('./helpers/fixtures');
 
 // Minimal stand-in for a socket.io Socket — just enough surface for
 // handshakeAuth/handlePageJoin to run against.
@@ -64,7 +64,7 @@ describe('socket auth', () => {
     });
 
     it('rejects a refresh token presented as the handshake token', (done) => {
-      const socket = makeFakeSocket(signRefreshToken(owner.id, 0));
+      const socket = makeFakeSocket(signRefreshToken(owner.id, 0, 'sid', 0));
       handshakeAuth(socket, (err) => {
         expect(err).toBeInstanceOf(Error);
         expect(socket.data.userId).toBeUndefined();
@@ -72,11 +72,34 @@ describe('socket auth', () => {
       });
     });
 
-    it('accepts a valid access token and sets socket.data.userId', (done) => {
+    it('accepts a valid access token and sets socket.data.userId', async () => {
+      const socket = makeFakeSocket(await accessTokenFor(owner));
+      await new Promise((resolve) =>
+        handshakeAuth(socket, (err) => {
+          expect(err).toBeUndefined();
+          expect(socket.data.userId).toBe(owner.id);
+          resolve();
+        })
+      );
+    });
+
+    it('rejects a validly signed access token whose session was revoked', async () => {
+      const { accessToken, refreshToken } = await require('../src/services/token.service').issueTokens(owner);
+      await require('../src/services/auth.service').logout(refreshToken);
+      const socket = makeFakeSocket(accessToken);
+      await new Promise((resolve) =>
+        handshakeAuth(socket, (err) => {
+          expect(err).toBeInstanceOf(Error);
+          expect(socket.data.userId).toBeUndefined();
+          resolve();
+        })
+      );
+    });
+
+    it('rejects an old-style access token with no session id', (done) => {
       const socket = makeFakeSocket(signAccessToken(owner.id));
       handshakeAuth(socket, (err) => {
-        expect(err).toBeUndefined();
-        expect(socket.data.userId).toBe(owner.id);
+        expect(err).toBeInstanceOf(Error);
         done();
       });
     });

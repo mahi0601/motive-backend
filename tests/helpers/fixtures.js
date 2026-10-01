@@ -20,7 +20,9 @@ const testEmail = (label) => `test-${RUN_ID}-${counter++}-${label}@example.inval
 
 async function makeUser(label, overrides = {}) {
   return prisma.user.create({
-    data: { name: `Test ${label}`, email: testEmail(label), password: null, ...overrides },
+    // Verified by default, since most tests are not about verification; pass
+    // `emailVerifiedAt: null` to get an unproven account.
+    data: { name: `Test ${label}`, email: testEmail(label), password: null, emailVerifiedAt: new Date(), ...overrides },
   });
 }
 
@@ -47,4 +49,10 @@ async function cleanupUsers(...users) {
   if (ids.length) await prisma.user.deleteMany({ where: { id: { in: ids } } });
 }
 
-module.exports = { testEmail, makeUser, makeWorkspaceWithMembers, cleanupUsers };
+// A real access token backed by a live Session row — what every authenticated
+// request and socket handshake now requires.
+async function accessTokenFor(user) {
+  return (await require('../../src/services/token.service').issueTokens(user)).accessToken;
+}
+
+module.exports = { accessTokenFor, testEmail, makeUser, makeWorkspaceWithMembers, cleanupUsers };
