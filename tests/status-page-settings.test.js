@@ -53,7 +53,7 @@ describe('status page details', () => {
     expect(view.body.status.page).toEqual({
       headline: 'Acme website redesign',
       summary: 'Phase 2 of 3: build and review.',
-      milestone: { title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z' },
+      milestone: { title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z', approvedAt: null },
       accent: 'violet',
       hideBranding: false,
       allowFeedback: false,

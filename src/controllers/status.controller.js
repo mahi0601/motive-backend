@@ -1,11 +1,13 @@
 const WorkspaceService = require('../services/workspace.service');
+const analytics = require('../services/analytics.service');
 const FeedbackService = require('../services/feedback.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 // Public — no auth. The link is the credential; see
 // WorkspaceService#getStatusByToken for exactly what it may expose.
 exports.getByToken = asyncHandler(async (req, res) => {
-  const status = await WorkspaceService.getStatusByToken(req.params.token);
+  const visitor = analytics.visitorKey({ ip: req.ip, userAgent: req.get('user-agent') });
+  const status = await WorkspaceService.getStatusByToken(req.params.token, { visitor });
   // A rotated or disabled link must stop working immediately, so nothing
   // between the server and the viewer may cache this response.
   res.set('Cache-Control', 'no-store');

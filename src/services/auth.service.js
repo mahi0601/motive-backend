@@ -8,6 +8,7 @@ const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
 const sessionService = require('./session.service');
 const audit = require('./audit.service');
+const analytics = require('./analytics.service');
 const emailService = require('./email.service');
 const logger = require('../config/logger');
 
@@ -79,6 +80,7 @@ exports.register = async ({ name, email, password }, ctx) => {
     data: { name, email, password: await hashPassword(password) },
   });
   await sendVerificationEmail(user);
+  await analytics.track('signup', { userId: user.id });
   return result(user, ctx);
 };
 
@@ -163,6 +165,7 @@ exports.loginWithGoogle = async (code, ctx) => {
         emailVerifiedAt: new Date(),
       },
     });
+    await analytics.track('signup', { userId: user.id });
   } else if (!user.googleId) {
     // Linking to an account that already existed. If that account had already
     // proven its address, whoever set its password is its owner, and nothing

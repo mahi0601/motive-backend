@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const audit = require('./audit.service');
+const analytics = require('./analytics.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
@@ -473,6 +474,7 @@ exports.enableShare = async (workspaceId, requesterId) => {
     select: { shareEnabledAt: true },
   });
   await audit.record({ type: 'share_link_enabled', actorId: requesterId, workspaceId });
+  await analytics.track('status_link_created', { userId: requesterId, workspaceId });
   return { token: raw, shareEnabledAt: ws.shareEnabledAt };
 };
 
@@ -508,6 +510,15 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
 
+  // A new milestone name or date starts a clean slate for approvals: bump the
+  // version approvals are tied to. Saving the same values again does not.
+  if ('milestoneTitle' in data || 'milestoneDate' in data) {
+    const current = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { milestoneTitle: true, milestoneDate: true } });
+    const titleChanged = 'milestoneTitle' in data && data.milestoneTitle !== current.milestoneTitle;
+    const dateChanged = 'milestoneDate' in data && (data.milestoneDate?.getTime() ?? null) !== (current.milestoneDate?.getTime() ?? null);
+    if (titleChanged || dateChanged) data.milestoneVersion = { increment: 1 };
+  }
+
   if (data.statusHideBranding === true) {
     const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
     if (!owner?.isPro) {
@@ -532,7 +543,7 @@ const STATUS_PAGE_TASK_LIMIT = 200;
 // ids, no assignees or other people, no descriptions, no comments or files —
 // just a title, a status and dates. The owner is warned in the UI that task
 // titles become public.
-exports.getStatusByToken = async (rawToken) => {
+exports.getStatusByToken = async (rawToken, { visitor } = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
@@ -547,11 +558,28 @@ exports.getStatusByToken = async (rawToken) => {
       statusAccent: true,
       statusHideBranding: true,
       statusAllowFeedback: true,
+      milestoneVersion: true,
       owner: { select: { isPro: true } },
     },
   });
   // Unknown, rotated and disabled links are indistinguishable on purpose.
   if (!ws) throw AppError.notFound('This status page is not available');
+
+  // Count a view only for a link that works. Fire and forget: never slows the page.
+  analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
+
+  // Approved = the latest approve-or-request-changes on THIS version of the
+  // milestone was an approval. Only the date is exposed: the sender's typed name
+  // is unverified text and this page is public.
+  let approvedAt = null;
+  if (ws.milestoneTitle) {
+    const latest = await prisma.clientFeedback.findFirst({
+      where: { workspaceId: ws.id, milestoneVersion: ws.milestoneVersion, kind: { in: ['approve', 'changes'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { kind: true, createdAt: true },
+    });
+    if (latest?.kind === 'approve') approvedAt = latest.createdAt;
+  }
 
   const [counts, tasks] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
@@ -574,7 +602,7 @@ exports.getStatusByToken = async (rawToken) => {
     page: {
       headline: ws.statusHeadline,
       summary: ws.statusSummary,
-      milestone: ws.milestoneTitle ? { title: ws.milestoneTitle, date: ws.milestoneDate } : null,
+      milestone: ws.milestoneTitle ? { title: ws.milestoneTitle, date: ws.milestoneDate, approvedAt } : null,
       accent: ws.statusAccent,
       // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
       hideBranding: ws.statusHideBranding && ws.owner.isPro,

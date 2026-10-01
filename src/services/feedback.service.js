@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
+const analytics = require('./analytics.service');
 const workspaceService = require('./workspace.service');
 const { getPagination, paginated } = require('../utils/pagination');
 
@@ -37,7 +38,7 @@ exports.submit = async (rawToken, input = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
-    select: { id: true, ownerId: true, name: true, milestoneTitle: true, statusAllowFeedback: true },
+    select: { id: true, ownerId: true, name: true, milestoneTitle: true, milestoneVersion: true, statusAllowFeedback: true },
   });
   if (!ws || !ws.statusAllowFeedback) throw notAvailable();
 
@@ -59,7 +60,7 @@ exports.submit = async (rawToken, input = {}) => {
   if (today >= DAILY_CAP) throw new AppError('This page cannot take more feedback right now. Please try again tomorrow.', 429);
 
   const row = await prisma.clientFeedback.create({
-    data: { workspaceId: ws.id, kind, authorName: name, message, milestoneTitle: ws.milestoneTitle },
+    data: { workspaceId: ws.id, kind, authorName: name, message, milestoneTitle: ws.milestoneTitle, milestoneVersion: ws.milestoneVersion },
   });
 
   // Tell the owner. The preview is short and is only ever shown as text.
@@ -74,15 +75,19 @@ exports.submit = async (rawToken, input = {}) => {
   });
   require('../sockets/socket.handler').emitNotification(ws.ownerId, notification);
   await audit.record({ type: 'client_feedback_received', workspaceId: ws.id, meta: { kind } });
+  await analytics.track('feedback_received', { workspaceId: ws.id });
   return { stored: true, id: row.id };
 };
 
 exports.list = async (workspaceId, requesterId, query = {}) => {
   await workspaceService.assertOwner(workspaceId, requesterId);
+  // `?kind=approve` is the sign-off record: just the approvals.
+  if (query.kind !== undefined && !KINDS.includes(query.kind)) throw new AppError('Unknown kind.', 422);
+  const where = { workspaceId, ...(query.kind ? { kind: query.kind } : {}) };
   const pagination = getPagination(query, { defaultLimit: 20, maxLimit: 100 });
   const [items, total, unread] = await Promise.all([
-    prisma.clientFeedback.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.limit }),
-    prisma.clientFeedback.count({ where: { workspaceId } }),
+    prisma.clientFeedback.findMany({ where, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.limit }),
+    prisma.clientFeedback.count({ where }),
     prisma.clientFeedback.count({ where: { workspaceId, readAt: null } }),
   ]);
   return { ...paginated(items, total, pagination), unread };
