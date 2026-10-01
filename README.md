@@ -38,6 +38,17 @@ Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot 
 
 `npm run lint` · `npm test` — both stay clean before every deploy (and run in CI against a throwaway Postgres container).
 
+### Testing
+
+The suite writes real rows, so it needs a real Postgres — and it **refuses to run against a Neon database** (`jest.setup.js`). Point `DATABASE_URL` at a local or throwaway instance for the run:
+
+```bash
+DATABASE_URL="postgresql://user@127.0.0.1:5432/motive_test" npx prisma migrate deploy
+DATABASE_URL="postgresql://user@127.0.0.1:5432/motive_test" npm test
+```
+
+Set `ALLOW_REMOTE_TEST_DB=1` only if you deliberately want to run against a hosted database you are happy to have test rows written to.
+
 <br>
 
 <details>
@@ -67,10 +78,11 @@ Only `DATABASE_URL` and `JWT_SECRET` are required — the process exits at boot 
 ### Stripe — the one that's easy to half-configure
 
 1. Webhook endpoint: `https://<your-api-host>/api/payments/webhook`, content type `application/json` (the route reads the raw body to verify the signature).
-2. **Subscribe it to both** `checkout.session.completed` **and** `checkout.session.async_payment_succeeded` (`src/services/payment.service.js` — `RELEVANT_EVENT_TYPES`). The second is what makes delayed-notification methods (UPI, etc.) actually grant Pro.
+2. **Subscribe it to these events** (`src/services/payment.service.js`): `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, and `invoice.payment_failed`. The first two grant Pro when a checkout is paid; the `customer.subscription.*` events keep it in step with renewals and cancellations — without them a cancelled subscriber would stay Pro forever.
 3. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`, the secret key into `STRIPE_SECRET_KEY`.
-4. Dashboard → Settings → Payment methods: enable whichever methods you want to accept — this app requests `automatic_payment_methods`, so what renders at checkout is entirely a Dashboard setting.
-5. Prices are inline (`PRO_UPGRADE_PRICE_USD_CENTS`, `PRO_UPGRADE_PRICE_INR_PAISE`); only `usd`/`inr` are accepted.
+4. Dashboard → Settings → Payment methods: enable whichever methods you want to accept. Checkout then offers those that are valid for a recurring payment in the buyer's currency.
+5. Dashboard → Settings → Billing → **Customer portal**: turn it on (and allow cancelling subscriptions). The app's "Manage billing" button opens it; it fails until it's enabled.
+6. Motive Pro is a **monthly subscription**. Prices are inline — `PRO_UPGRADE_PRICE_USD_CENTS` / `PRO_UPGRADE_PRICE_INR_PAISE` are now **per-month** amounts (they used to be a one-time total, so review them if you carried values over); only `usd`/`inr` are accepted. Everyone who was Pro before subscriptions launched is marked `proLifetime` by the migration and stays Pro regardless of any subscription.
 
 ### Google OAuth
 
