@@ -130,6 +130,17 @@ model Workspace {
   // from queries, see config/prisma.js); both are null when sharing is off.
   shareTokenHash String?   @unique
   shareEnabledAt DateTime?
+  // What the owner chooses to show on that public page. All of it is PUBLIC to
+  // anyone with the link, plain text only (length limits are enforced in
+  // validators/workspace.validator.js). `statusAccent` is a key from
+  // utils/statusAccents.js, never a free colour value. Hiding the "Powered by
+  // Motive" footer is a Pro feature, checked on write and again when served.
+  statusHeadline     String?
+  statusSummary      String?
+  milestoneTitle     String?
+  milestoneDate      DateTime?
+  statusAccent       String   @default("teal")
+  statusHideBranding Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

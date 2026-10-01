@@ -56,6 +56,11 @@ exports.enableShare = asyncHandler(async (req, res) => {
   res.json({ success: true, share });
 });
 
+exports.updateStatusPage = asyncHandler(async (req, res) => {
+  const page = await WorkspaceService.updateStatusPage(req.params.id, req.user.id, req.body);
+  res.json({ success: true, page });
+});
+
 exports.disableShare = asyncHandler(async (req, res) => {
   await WorkspaceService.disableShare(req.params.id, req.user.id);
   res.json({ success: true });

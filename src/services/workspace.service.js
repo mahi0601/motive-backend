@@ -485,6 +485,43 @@ exports.disableShare = async (workspaceId, requesterId) => {
   await audit.record({ type: 'share_link_disabled', actorId: requesterId, workspaceId });
 };
 
+// Owner-only edit of what the public status page says about the project. See
+// the Workspace model for what each field is. Only fields present in `input`
+// are touched; '' (or null for the date) clears one. Hiding the "Powered by
+// Motive" footer needs Pro: refused here for a free owner, and the public read
+// below re-checks it so a lapsed Pro brings the footer back without a write.
+exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
+  await assertOwner(workspaceId, requesterId);
+
+  const text = (v) => (v === undefined ? undefined : v === null || v === '' ? null : String(v).trim() || null);
+  const data = {
+    statusHeadline: text(input.headline),
+    statusSummary: text(input.summary),
+    milestoneTitle: text(input.milestoneTitle),
+    milestoneDate:
+      input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
+    statusAccent: input.accent,
+    statusHideBranding: input.hideBranding,
+  };
+  for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
+
+  if (data.statusHideBranding === true) {
+    const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
+    if (!owner?.isPro) {
+      throw AppError.paymentRequired('Hiding "Powered by Motive" is part of Motive Pro.');
+    }
+  }
+
+  const ws = await prisma.workspace.update({
+    where: { id: workspaceId },
+    data,
+    select: { statusHeadline: true, statusSummary: true, milestoneTitle: true, milestoneDate: true, statusAccent: true, statusHideBranding: true },
+  });
+  // Which fields changed, never what they say.
+  await audit.record({ type: 'status_page_updated', actorId: requesterId, workspaceId, meta: { fields: Object.keys(data).join(',') } });
+  return ws;
+};
+
 const STATUS_PAGE_TASK_LIMIT = 200;
 
 // Everything the public page may see, and nothing else: an allowlist built
@@ -496,7 +533,18 @@ exports.getStatusByToken = async (rawToken) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
-    select: { id: true, name: true, icon: true },
+    select: {
+      id: true,
+      name: true,
+      icon: true,
+      statusHeadline: true,
+      statusSummary: true,
+      milestoneTitle: true,
+      milestoneDate: true,
+      statusAccent: true,
+      statusHideBranding: true,
+      owner: { select: { isPro: true } },
+    },
   });
   // Unknown, rotated and disabled links are indistinguishable on purpose.
   if (!ws) throw AppError.notFound('This status page is not available');
@@ -519,6 +567,14 @@ exports.getStatusByToken = async (rawToken) => {
 
   return {
     workspace: { name: ws.name, icon: ws.icon },
+    page: {
+      headline: ws.statusHeadline,
+      summary: ws.statusSummary,
+      milestone: ws.milestoneTitle ? { title: ws.milestoneTitle, date: ws.milestoneDate } : null,
+      accent: ws.statusAccent,
+      // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
+      hideBranding: ws.statusHideBranding && ws.owner.isPro,
+    },
     summary: { ...summary, total, percent },
     tasks: tasks.map((t) => ({
       title: t.title,
