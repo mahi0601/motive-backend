@@ -38,7 +38,7 @@ function buildApp(makeMiddleware) {
   app.use(makeMiddleware());
   // A login-like route: hands back the refresh cookie and a csrf redirect, exactly what leaks today.
   app.post('/api/auth/login', (req, res) => {
-    res.cookie('motive_rt', SECRETS.refresh, { httpOnly: true, path: '/api/auth' });
+    res.setHeader('Set-Cookie', `motive_rt=${SECRETS.refresh}; Path=/api/auth; HttpOnly; Secure; SameSite=None`);
     res.set('X-Csrf-Token', SECRETS.csrf);
     res.json({ success: true });
   });
