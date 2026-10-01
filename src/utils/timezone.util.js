@@ -141,4 +141,4 @@ function bucketKey(period, localDate, periodStartLocal) {
   return `Week ${Math.floor(dayIndex / 7) + 1}`; // quarter: relative week number within it
 }
 
-module.exports = { getZonedParts, getPeriodBounds, bucketKey };
+module.exports = { getZonedParts, getPeriodBounds, bucketKey, zonedMidnightToUtc, addDays };

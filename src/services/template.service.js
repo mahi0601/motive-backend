@@ -49,11 +49,14 @@ const resolve = async (templateId, userId) => {
 };
 
 // Create a new page from a template (page + its blocks).
-exports.use = async (templateId, userId, { parentId } = {}) => {
+// `workspaceId` is the workspace the page should land in (the one the user is
+// currently working in); pageService.create checks write access to it, and
+// falls back to the user's default workspace when omitted.
+exports.use = async (templateId, userId, { parentId, workspaceId } = {}) => {
   const tpl = await resolve(templateId, userId);
 
   const page = await pageService.create(
-    { title: tpl.name === 'Blank page' ? 'Untitled' : tpl.name, icon: tpl.icon, parentId },
+    { title: tpl.name === 'Blank page' ? 'Untitled' : tpl.name, icon: tpl.icon, parentId, workspaceId },
     userId
   );
 

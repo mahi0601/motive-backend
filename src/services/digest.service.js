@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { getZonedParts, zonedMidnightToUtc, addDays } = require('../utils/timezone.util');
 
 const PICK = { id: true, title: true, dueDate: true, priority: true, category: true };
 const priorityRank = { High: 0, Medium: 1, Low: 2 };
@@ -8,11 +9,15 @@ const priorityRank = { High: 0, Medium: 1, Low: 2 };
 // instant, and reliable for something this mechanical; an LLM-generated
 // version is a natural upgrade path (see Motive's Phase 2 roadmap) once
 // there's a reason to spend on it.
-exports.getDailyDigest = async (userId) => {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
+//
+// "Today" is the user's local day (their saved `timezone`, like Momentum), not
+// the server's — a server in UTC would otherwise call a task due at 8:30am in
+// Kolkata "overdue" for the first half of the user's own day, or miss a task
+// due this evening. `now` is injectable so the boundary is testable.
+exports.getDailyDigest = async (userId, { timezone = 'UTC', now = new Date() } = {}) => {
+  const today = getZonedParts(now, timezone);
+  const startOfToday = zonedMidnightToUtc(today, timezone);
+  const endOfToday = zonedMidnightToUtc(addDays(today, 1), timezone);
 
   const [overdue, dueToday] = await Promise.all([
     prisma.task.findMany({

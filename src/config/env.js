@@ -94,8 +94,28 @@ const config = {
 // identical copy of this check against `corsOrigins`.
 config.corsOriginCheck = (origin, cb) => {
   if (!origin || config.corsOrigins.includes(origin)) return cb(null, true);
-  return cb(new Error(`CORS blocked for origin: ${origin}`));
+  // A plain Error would surface as a 500 (and page Sentry) for what is just a
+  // disallowed caller; mark it as the client error it is.
+  const err = new Error(`CORS blocked for origin: ${origin}`);
+  err.statusCode = 403;
+  err.isOperational = true;
+  return cb(err);
 };
+
+// This API's own public base URL — used to build absolute links that must
+// point back at this service (currently just the local-disk upload URL in
+// storage.service.js; R2 already builds an absolute URL from R2_PUBLIC_URL
+// regardless of host). Previously that URL was built from the *request's*
+// protocol/Host header, which a client fully controls — a forged Host wrote
+// an attacker-chosen absolute URL into the File.url column, later rendered
+// to other users. RENDER_EXTERNAL_URL is auto-injected by Render on every
+// service; PUBLIC_API_URL overrides it for any other host. Falls back to
+// localhost for docker-compose / local dev, where the port is known.
+config.publicApiUrl = (
+  process.env.PUBLIC_API_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  `http://localhost:${config.port}`
+).replace(/\/$/, '');
 
 // Required by ./logger only from here on — logger.js has no dependency back
 // on this module (it reads process.env directly, see its own comment), so

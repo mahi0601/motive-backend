@@ -16,3 +16,9 @@ updates:
       development-dependencies:
         dependency-type: "development"
         update-types: ["patch", "minor"]
+  # Actions are pinned to commit SHAs (a tag can be moved); Dependabot keeps
+  # the SHAs and their version comments current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

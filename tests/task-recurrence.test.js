@@ -1,5 +1,5 @@
-// Regression coverage for recurring-task spawning (PLAN's regression-debt
-// item 3) — including the ownership bug this session found and fixed:
+// Regression coverage for recurring-task spawning — including the ownership
+// bug this session found and fixed:
 // spawnNextOccurrence used to take the *completer's* userId for the new
 // occurrence, not the original task's owner. Harmless while writes were
 // owner-only; a real bug the moment a workspace editor could complete a

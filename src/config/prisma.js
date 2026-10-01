@@ -9,6 +9,12 @@ const prisma = new PrismaClient({
     user: {
       password: true,
       stripeCustomerId: true,
+      stripeSubscriptionId: true,
+    },
+    // Members fetch whole workspace rows; the share-token hash is only ever
+    // needed in a `where` (status lookup), never in a response.
+    workspace: {
+      shareTokenHash: true,
     },
   },
 });

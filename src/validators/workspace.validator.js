@@ -8,3 +8,39 @@ exports.inviteRules = [
 exports.roleUpdateRules = [
   body('role').isIn(['editor', 'viewer']).withMessage('Role must be editor or viewer'),
 ];
+
+// `name` and `icon` are the only fields the service writes; both optional
+// (the schema has defaults), but bounded when present.
+exports.createWorkspaceRules = [
+  body('name').optional().isString().trim().isLength({ min: 1, max: 100 }).withMessage('Workspace name must be 1–100 characters'),
+  body('icon').optional().isString().isLength({ max: 32 }),
+];
+
+const { ACCENTS } = require('../utils/statusAccents');
+
+// Everything here is shown publicly to anyone with the status link, so it is
+// plain text with hard length limits. An empty string (or null for the date)
+// clears a field. Unknown keys are ignored by the service, which copies fields
+// by name.
+const optionalText = (field, max) =>
+  body(field)
+    .optional({ nullable: true })
+    .isString()
+    .withMessage(`${field} must be text`)
+    .bail()
+    .trim()
+    .isLength({ max })
+    .withMessage(`${field} must be at most ${max} characters`);
+
+exports.statusPageRules = [
+  optionalText('headline', 120),
+  optionalText('summary', 600),
+  optionalText('milestoneTitle', 100),
+  body('milestoneDate')
+    .optional({ nullable: true })
+    .custom((v) => v === '' || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v))))
+    .withMessage('milestoneDate must be a date (YYYY-MM-DD)'),
+  body('accent').optional().isIn(ACCENTS).withMessage(`accent must be one of: ${ACCENTS.join(', ')}`),
+  body('hideBranding').optional().isBoolean({ strict: true }).withMessage('hideBranding must be true or false'),
+  body('allowFeedback').optional().isBoolean({ strict: true }).withMessage('allowFeedback must be true or false'),
+];

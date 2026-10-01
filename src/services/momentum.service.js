@@ -245,7 +245,7 @@ exports.getMomentum = async (userId, { period = 'week', timezone = 'UTC' } = {})
     // click-through can filter completedAt >= this instant instead of
     // re-deriving week/month/quarter boundaries client-side — which would
     // risk reintroducing the exact timezone/week-start bug this endpoint
-    // was built to fix (see PLAN §3).
+    // was built to fix.
     periodStart: bounds.currentStart.toISOString(),
     throughput: buckets,
     cycleTimeDays: currentSummary.cycleTimeDays,

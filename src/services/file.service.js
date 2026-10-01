@@ -6,12 +6,36 @@ const taskService = require('./task.service');
 // `taskId` is optional — a bare upload (no task association) still just
 // returns the URL/file row. Attaching a file to a task is a content
 // mutation, same as adding a subtask — requires 'write'.
-exports.upload = async (file, { protocol, host }, taskId, userId) => {
+//
+// Each account has a storage quota — a free account a small one, Pro a large
+// one — checked before anything is written to the bucket. Concurrent uploads
+// can overshoot by a file or two; the point is a ceiling on abuse, not exact
+// accounting.
+const MB = 1024 * 1024;
+const QUOTA_BYTES = {
+  free: (parseInt(process.env.UPLOAD_QUOTA_FREE_MB, 10) || 100) * MB,
+  pro: (parseInt(process.env.UPLOAD_QUOTA_PRO_MB, 10) || 2048) * MB,
+};
+
+exports.upload = async (file, taskId, userId) => {
   if (taskId) await taskService.assertAccess(taskId, userId, 'write');
 
-  const { url: fileUrl } = await storageService.saveFile(file, { protocol, host });
+  const size = file.size ?? file.buffer?.length ?? 0;
+  const [user, used] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { isPro: true } }),
+    prisma.file.aggregate({ where: { uploadedBy: userId }, _sum: { size: true } }),
+  ]);
+  const quota = user?.isPro ? QUOTA_BYTES.pro : QUOTA_BYTES.free;
+  if ((used._sum.size || 0) + size > quota) {
+    throw new AppError(
+      `You have used your ${Math.round(quota / MB)} MB of file storage — delete some files${user?.isPro ? '' : ' or upgrade to Motive Pro'} to upload more.`,
+      413
+    );
+  }
+
+  const { url: fileUrl } = await storageService.saveFile(file);
   const fileRow = await prisma.file.create({
-    data: { name: file.originalname, url: fileUrl, uploadedBy: userId, taskId: taskId || null },
+    data: { name: file.originalname, url: fileUrl, size, uploadedBy: userId, taskId: taskId || null },
   });
   return { fileUrl, file: fileRow };
 };

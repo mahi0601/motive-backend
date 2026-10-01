@@ -12,9 +12,9 @@ module.exports = [
     },
     rules: {
       ...js.configs.recommended.rules,
-      // The whole point of this config — see PLAN "centralized logger"
-      // section. Overridden below for the two places raw console is
-      // actually correct.
+      // The whole point of this config: all logging goes through the
+      // centralized logger. Overridden below for the two places raw console
+      // is actually correct.
       'no-console': 'error',
     },
   },

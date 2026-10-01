@@ -10,35 +10,50 @@ const logger = require('../config/logger');
 // back on /google/callback was actually issued by OUR /google redirect, not
 // crafted by an attacker (see googleRedirect/googleCallback below).
 const OAUTH_STATE_COOKIE = 'motive_oauth_state';
-const oauthStateCookieOptions = () => ({
+const OAUTH_STATE_PATH = '/api/auth/google';
+const OAUTH_STATE_MAX_AGE_MS = 5 * 60 * 1000; // just long enough for the Google consent round-trip
+// Options for CLEARING the cookie: the same path/domain/flags it was set with,
+// but deliberately WITHOUT maxAge — Express turns maxAge into a future expiry,
+// so passing it to clearCookie() re-sets the cookie (blank, for another five
+// minutes) instead of deleting it. Setting the cookie is written out inline in
+// googleRedirect, not through a helper, so its httpOnly / secure flags are
+// visible right at the res.cookie() call (static analysis can't see through a
+// helper and reports them as missing).
+const oauthStateClearOptions = () => ({
   httpOnly: true,
   secure: config.cookie.secure,
   sameSite: config.cookie.sameSite,
   domain: config.cookie.domain,
-  path: '/api/auth/google',
-  maxAge: 5 * 60 * 1000, // just long enough for the Google consent round-trip
+  path: OAUTH_STATE_PATH,
 });
 
 // Matches capacitor.config.json's `appId` — the custom scheme the Android
 // app registers an intent-filter for (see AndroidManifest.xml).
 const NATIVE_CALLBACK_URL = 'com.motive.app://oauth-callback';
 
+// RFC 7636 code_challenge / code_verifier alphabet and length bounds.
+const PKCE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
+
 // Set the refresh cookie and return { user, accessToken }. The access token is
-// kept in memory by the client; the refresh token lives only in the httpOnly cookie.
+// kept in memory by the client; the refresh token lives only in the httpOnly
+// cookie (see session.service.js and sameSite.middleware.js).
 const sendAuth = (res, status, { user, accessToken, refreshToken }) => {
   tokenService.setRefreshCookie(res, refreshToken);
   res.status(status).json({ success: true, user, accessToken });
 };
 
+// Context for a new session — only what identifies the device.
+const sessionContext = (req) => ({ userAgent: req.get('user-agent') });
+
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
-  const data = await AuthService.register({ name, email, password });
+  const data = await AuthService.register({ name, email, password }, sessionContext(req));
   sendAuth(res, 201, data);
 });
 
 exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  const data = await AuthService.login({ email, password });
+  const data = await AuthService.login({ email, password }, sessionContext(req));
   sendAuth(res, 200, data);
 });
 
@@ -55,6 +70,16 @@ exports.logout = asyncHandler(async (req, res) => {
   await AuthService.logout(token);
   tokenService.clearRefreshCookie(res);
   res.status(200).json({ success: true, message: 'Logged out' });
+});
+
+exports.verifyEmail = asyncHandler(async (req, res) => {
+  await AuthService.verifyEmail(req.body.token);
+  res.status(200).json({ success: true, message: 'Email confirmed.' });
+});
+
+exports.resendVerification = asyncHandler(async (req, res) => {
+  await AuthService.resendVerification(req.user.id);
+  res.status(200).json({ success: true, message: 'If your email is not confirmed yet, a new link is on its way.' });
 });
 
 // Always the same generic response, whether or not the email is registered —
@@ -89,7 +114,27 @@ exports.googleRedirect = asyncHandler(async (req, res) => {
   if (!config.google.clientId) throw AppError.badRequest('Google sign-in is not configured.');
   const mode = req.query.native === '1' ? 'native' : 'web';
   const nonce = crypto.randomBytes(16).toString('hex');
-  res.cookie(OAUTH_STATE_COOKIE, nonce, oauthStateCookieOptions());
+
+  // Native flow only: the app's PKCE challenge rides in the server-set state
+  // cookie (not the `state` param), so it can't be swapped by anyone who can
+  // merely craft a callback URL. base64url(sha256) is always 43 characters;
+  // the range allows other valid S256 encodings without accepting junk.
+  let cookieValue = nonce;
+  if (mode === 'native') {
+    const challenge = req.query.code_challenge;
+    if (typeof challenge !== 'string' || !PKCE_PATTERN.test(challenge)) {
+      throw AppError.badRequest('Missing or invalid code_challenge.');
+    }
+    cookieValue = `${nonce}.${challenge}`;
+  }
+  res.cookie(OAUTH_STATE_COOKIE, cookieValue, {
+    httpOnly: true,
+    secure: config.cookie.secure,
+    sameSite: config.cookie.sameSite,
+    domain: config.cookie.domain,
+    path: OAUTH_STATE_PATH,
+    maxAge: OAUTH_STATE_MAX_AGE_MS,
+  });
 
   // An invite token riding along on `?invite=` (see GoogleSignInButton.jsx —
   // Login/Register pass it through when the page itself was reached via an
@@ -133,8 +178,8 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   // Verify `state` matches the nonce we set on THIS browser during
   // googleRedirect — see the comment there. Single-use: clear it regardless
   // of outcome so a captured callback URL can't be replayed either.
-  const expectedNonce = req.cookies?.[OAUTH_STATE_COOKIE];
-  res.clearCookie(OAUTH_STATE_COOKIE, oauthStateCookieOptions());
+  const [expectedNonce, codeChallenge] = (req.cookies?.[OAUTH_STATE_COOKIE] || '').split('.');
+  res.clearCookie(OAUTH_STATE_COOKIE, oauthStateClearOptions());
   const [nonce, mode, inviteToken] = typeof state === 'string' ? state.split('.') : [];
   const stateValid = !!expectedNonce && nonce === expectedNonce;
   const isNative = mode === 'native';
@@ -147,9 +192,13 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   if (error || !code || !stateValid) return res.redirect(failureRedirect);
 
   try {
-    const data = await AuthService.loginWithGoogle(code);
+    const data = await AuthService.loginWithGoogle(code, sessionContext(req));
     if (isNative) {
-      const exchangeCode = await AuthService.createNativeExchangeCode(data.user.id);
+      // A native callback with no stored challenge means the flow didn't start
+      // through googleRedirect's native branch — refuse rather than mint a
+      // code that nothing could ever verify.
+      if (!codeChallenge) return res.redirect(failureRedirect);
+      const exchangeCode = await AuthService.createNativeExchangeCode(data.user.id, codeChallenge);
       const nativeUrl = inviteToken
         ? `${NATIVE_CALLBACK_URL}?code=${exchangeCode}&invite=${inviteToken}`
         : `${NATIVE_CALLBACK_URL}?code=${exchangeCode}`;
@@ -159,6 +208,8 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     // Same hand-off Login.jsx/Register.jsx already use for the email/password
     // path — land on the invite page (which now sees an authenticated user)
     // instead of /dashboard when this sign-in was reached via an invite link.
+    // Nothing secret rides this redirect: the session is the httpOnly cookie
+    // set above, which AuthContext's bootstrap refresh picks up on load.
     res.redirect(inviteToken ? `${config.frontendUrl}/invite/${inviteToken}` : `${config.frontendUrl}/dashboard`);
   } catch (err) {
     // logger.error only reports to Sentry when err isn't an operational
@@ -175,8 +226,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
 // link — made from the WebView itself, so setRefreshCookie (inside
 // sendAuth) actually persists in the app's own cookie storage this time.
 exports.nativeExchange = asyncHandler(async (req, res) => {
-  const { code } = req.body;
+  const { code, code_verifier: codeVerifier } = req.body;
   if (!code) throw AppError.badRequest('Missing code');
-  const data = await AuthService.exchangeNativeCode(code);
+  if (typeof codeVerifier !== 'string' || !PKCE_PATTERN.test(codeVerifier)) {
+    throw AppError.badRequest('Missing or invalid code_verifier');
+  }
+  const data = await AuthService.exchangeNativeCode(code, codeVerifier, sessionContext(req));
   sendAuth(res, 200, data);
 });

@@ -3,18 +3,43 @@ name: CI
 on:
   push:
     branches: [master]
-  pull_request:
-    branches: [master]
+  pull_request: # any base branch, so stacked PRs are checked too
+
+# A newer push to the same ref supersedes an in-flight run — but never cancel
+# a run on master, so a deploy that's already started isn't cut off mid-way.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
 
 jobs:
+  # Scans only the commits introduced by this push/PR (gitleaks-action
+  # computes that range itself per event type) — not the repo's full
+  # history. A real credential (a MongoDB Atlas connection string + JWT secret) was
+  # committed and later deleted in this repo's history before this job
+  # existed; a full-history scan would flag that forever even after
+  # rotation. Scanning only what's new is what actually prevents a repeat,
+  # without permanently red-X'ing CI over an already-handled leak.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # gitleaks-action needs real history to diff the push/PR range against
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+
   build:
     runs-on: ubuntu-latest
     # A throwaway Postgres for the lifetime of this job only — not the dev
     # database, no Neon/account access needed. Gives `prisma migrate deploy`
     # and `npm test` a real database to run against instead of just parsing
-    # the schema (see PLAN's "Execution plan" — this replaces an earlier,
-    # since-corrected idea of using a Neon branch here, which would have
-    # needed dashboard access neither the assistant nor CI has).
+    # the schema. (A Neon branch was considered and rejected: it would need
+    # dashboard access that CI doesn't have.)
     services:
       postgres:
         image: postgres:16
@@ -36,13 +61,23 @@ jobs:
       # existing the moment the job ends.
       JWT_SECRET: ci-only-dummy-secret-0000000000000000000000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Non-blocking, deliberately: after `npm audit fix` the only advisories
+      # left are 3 high ones in the Prisma CLI chain (prisma → @prisma/config →
+      # deepmerge-ts). They are accepted: the package only loads the CLI's own
+      # config file at build/migrate time and is not reachable from request
+      # handling, and a Prisma major upgrade does not clear it (every
+      # @prisma/config release still depends on the affected deepmerge-ts).
+      # Re-check when Prisma ships a config package on deepmerge-ts 8.x, then
+      # make this blocking again so new high/critical advisories fail the build.
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
       - run: npx prisma validate
       - run: npx prisma generate
       # Applies every committed migration to the fresh container above —
@@ -50,3 +85,40 @@ jobs:
       # not just that schema.prisma parses.
       - run: npx prisma migrate deploy
       - run: npm test
+
+  # Deploys only after every check above passed, and only for a push to master
+  # (never for a PR). render.yaml sets `autoDeploy: false`, so this job is the
+  # only thing that can ship — a red CI run can no longer reach production.
+  #
+  # Needs RENDER_DEPLOY_HOOK_URL (Render → motive-api → Settings → Deploy Hook)
+  # as a secret of the `render-production` GitHub environment, restricted to
+  # the master branch. The hook URL is a credential: keep it in GitHub secrets,
+  # never in the repo. `permissions: {}` — the job only calls curl and needs no
+  # access to this repository's contents or the GitHub API.
+  deploy:
+    needs: [secret-scan, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions: {}
+    environment: render-production
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret is not set" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+      # Smoke check only: Render keeps serving the previous version until the
+      # new one is healthy, so a pass here means the service is up, not that
+      # the new build has finished rolling out.
+      - name: Smoke-check /api/health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS https://motive-api-u7xg.onrender.com/api/health; then exit 0; fi
+            sleep 20
+          done
+          echo "API did not become healthy in time" >&2
+          exit 1

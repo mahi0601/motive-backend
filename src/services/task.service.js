@@ -2,13 +2,15 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const activityLog = require('./activityLog.service');
 const workspaceService = require('./workspace.service');
+const storageService = require('./storage.service');
+const { escapeLike } = require('../utils/like');
 
 // Paginated, indexed read — scales to large task counts per user.
 //
-// `workspaceId` is opt-in and additive (see PLAN "Total scope" §A): omitted,
+// `workspaceId` is opt-in and additive: omitted,
 // this is byte-for-byte the same `WHERE userId = ?` every existing solo
-// caller already gets — that's deliberate, it's what "regression on the
-// existing solo product" in the plan's verification section means. Only
+// caller already gets — that's deliberate, so the existing solo product
+// doesn't regress. Only
 // when a caller explicitly asks for a specific workspace's tasks (a shared
 // client/team board) does this become workspace-scoped instead of
 // user-scoped, and only after confirming the caller can actually read that
@@ -19,7 +21,16 @@ exports.getAll = async (userId, { skip, limit, workspaceId } = {}) => {
     if (!(await workspaceService.canAccess(workspaceId, userId, 'read'))) {
       throw AppError.notFound('Workspace not found');
     }
-    where = { workspaceId };
+    // A solo user's own default workspace also owns any of their tasks that
+    // predate workspaces and were never backfilled (workspaceId is nullable) —
+    // without this, switching the UI to "My Workspace" would make those tasks
+    // vanish. Only the caller's OWN null-workspace tasks, and only for their
+    // own default workspace, never another member's.
+    const defaultWs = await workspaceService.getDefault(userId);
+    where =
+      defaultWs.id === workspaceId
+        ? { OR: [{ workspaceId }, { userId, workspaceId: null }] }
+        : { workspaceId };
   } else {
     where = { userId };
   }
@@ -38,7 +49,7 @@ exports.getAll = async (userId, { skip, limit, workspaceId } = {}) => {
 // Was `assertOwner` (owner-only, full stop) — comment/subtask/file services
 // (see comment.service.js/subtask.service.js/file.service.js) all built on
 // that, from before a task could belong to a shared workspace at all. Once
-// Task gained workspaceId (PLAN "Total scope" §A), that became a stale
+// Task gained workspaceId, that became a stale
 // assumption baked into three other services, not just this one — an
 // editor who can now edit a shared task still couldn't comment on it, add a
 // subtask, or attach a file to it. Same owner-or-role check as everywhere
@@ -48,18 +59,21 @@ exports.getAll = async (userId, { skip, limit, workspaceId } = {}) => {
 exports.assertAccess = async (taskId, userId, need = 'read') => {
   const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, title: true, userId: true, workspaceId: true } });
   if (!task) throw AppError.notFound('Task not found');
-  const isOwner = task.userId === userId;
-  if (!isOwner && !(await workspaceService.canAccess(task.workspaceId, userId, need))) {
-    throw AppError.notFound('Task not found');
-  }
+  await workspaceService.assertResourceAccess(task, userId, need, 'Task not found');
   return task;
 };
 
 // Title search, for the command palette — mirrors page.service.js's search.
+// Covers the caller's own tasks plus every task in any workspace they belong
+// to (owner or member) — a teammate's or client's task is as findable as your
+// own, matching what the workspace board already shows.
 exports.search = async (term, userId) => {
   if (!term || !term.trim()) return [];
   return prisma.task.findMany({
-    where: { userId, title: { contains: term.trim(), mode: 'insensitive' } },
+    where: {
+      OR: [{ userId }, { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } }],
+      title: { contains: escapeLike(term.trim()), mode: 'insensitive' },
+    },
     orderBy: { position: 'asc' },
     take: 20,
   });
@@ -142,6 +156,17 @@ function withNormalizedDueDate(patch) {
   return patch;
 }
 
+// An assignee must be someone who can actually see the task's workspace —
+// otherwise any caller could "assign" a task to an arbitrary user id, which
+// both leaks that the user exists (FK error vs. success) and pushes a task
+// onto someone with no access to it. `null`/undefined means "unassigned".
+async function assertAssigneeInWorkspace(workspaceId, assigneeId) {
+  if (!assigneeId) return;
+  if (!(await workspaceService.canAccess(workspaceId, assigneeId, 'read'))) {
+    throw AppError.badRequest('Assignee must be a member of the workspace');
+  }
+}
+
 exports.create = async (data, userId) => {
   const patch = {};
   for (const key of WRITABLE_FIELDS) if (key in data) patch[key] = data[key];
@@ -170,6 +195,7 @@ exports.create = async (data, userId) => {
   // reasoning in the backfill script) and overridable by an explicit
   // assigneeId when creating into a shared workspace.
   const assigneeId = 'assigneeId' in data ? data.assigneeId : userId;
+  await assertAssigneeInWorkspace(workspaceId, assigneeId);
 
   // count+create wrapped in a Serializable transaction so two concurrent
   // creates can't both read the same count and collide on `position`.
@@ -185,8 +211,8 @@ exports.create = async (data, userId) => {
 };
 
 // Owner, or a workspace editor with write access to the task's workspace
-// (see PLAN "Total scope" §A — "every Task query/mutation" routes through
-// the same check Page/Block writes now do). Access is verified with an
+// (every Task query/mutation routes through the same check Page/Block
+// writes do). Access is verified with an
 // explicit fetch-then-check rather than folding `userId` into the
 // `updateMany` WHERE clause, because that clause can no longer express "is
 // this caller allowed" — a non-owner editor's update would otherwise just
@@ -201,10 +227,8 @@ exports.update = async (id, data, userId) => {
   // double-click, etc.) would look identical to a first-time completion.
   const existing = await prisma.task.findUnique({ where: { id }, select: { userId: true, workspaceId: true, status: true } });
   if (!existing) throw AppError.notFound('Task not found');
-  const isOwner = existing.userId === userId;
-  if (!isOwner && !(await workspaceService.canAccess(existing.workspaceId, userId, 'write'))) {
-    throw AppError.notFound('Task not found');
-  }
+  await workspaceService.assertResourceAccess(existing, userId, 'write', 'Task not found');
+  if ('assigneeId' in patch) await assertAssigneeInWorkspace(existing.workspaceId, patch.assigneeId);
   const isNewCompletion = patch.status === 'done' && existing.status !== 'done';
 
   withCompletedAt(patch, existing.status);
@@ -227,11 +251,12 @@ exports.update = async (id, data, userId) => {
 exports.remove = async (id, userId) => {
   const existing = await prisma.task.findUnique({ where: { id }, select: { userId: true, workspaceId: true, title: true } });
   if (!existing) throw AppError.notFound('Task not found');
-  const isOwner = existing.userId === userId;
-  if (!isOwner && !(await workspaceService.canAccess(existing.workspaceId, userId, 'write'))) {
-    throw AppError.notFound('Task not found');
-  }
+  await workspaceService.assertResourceAccess(existing, userId, 'write', 'Task not found');
+  const files = await prisma.file.findMany({ where: { taskId: id }, select: { url: true } });
   await prisma.task.delete({ where: { id } });
+  // The File rows went with the task (cascade); remove the stored objects too,
+  // best effort, so deleted attachments don't linger in the bucket.
+  files.forEach((f) => storageService.deleteFile(f.url).catch(() => {}));
   activityLog.log('deleted', userId, { description: `Deleted "${existing.title}"` });
   return { deleted: true };
 };

@@ -8,7 +8,6 @@ const fileRoutes = require('./file.routes');
 const subtaskRoutes = require('./subtask.routes');
 const commentRoutes = require('./comment.routes');
 const taskRoutes = require('./task.routes');
-const statsRoutes = require('./statistics.routes'); // deprecated alias — kept one release for stale PWA clients, see momentumRoutes
 const momentumRoutes = require('./momentum.routes');
 const notificationRoutes = require('./notification.routes');
 const activityRoutes = require('./activity.routes');
@@ -19,6 +18,7 @@ const pageRoutes = require('./page.routes');
 const blockRoutes = require('./block.routes');
 const templateRoutes = require('./template.routes');
 const paymentRoutes = require('./payment.routes');
+const statusRoutes = require('./status.routes');
 
 router.use('/auth', authRoutes);
 router.use('/payments', paymentRoutes);
@@ -28,7 +28,6 @@ router.use('/files', fileRoutes);
 router.use('/subtasks', subtaskRoutes);
 router.use('/comments', commentRoutes);
 router.use('/tasks', taskRoutes);
-router.use('/stats', statsRoutes); // deprecated — superseded by /momentum
 router.use('/momentum', momentumRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/activity', activityRoutes);
@@ -37,6 +36,8 @@ router.use('/digest', digestRoutes);
 // Notion-style workspace
 router.use('/workspaces', workspaceRoutes);
 router.use('/invites', inviteRoutes);
+// Public, read-only client status page (no auth — the share token is the credential).
+router.use('/status', statusRoutes);
 router.use('/pages', pageRoutes);
 router.use('/blocks', blockRoutes);
 router.use('/templates', templateRoutes);

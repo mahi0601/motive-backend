@@ -71,3 +71,57 @@ describe('deleteAccount — owner-with-other-members guard', () => {
     await prisma.$disconnect();
   });
 });
+
+describe('deleteAccount — Google-only accounts (no password)', () => {
+  test('are refused without a matching email', async () => {
+    const googleUser = await makeUser('deleteGoogleNoEmail'); // password: null
+    await expect(userService.deleteAccount(googleUser.id, undefined, undefined)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(userService.deleteAccount(googleUser.id, undefined, 'someone-else@example.invalid')).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(await prisma.user.findUnique({ where: { id: googleUser.id } })).toBeTruthy();
+    await cleanupUsers(googleUser);
+  });
+
+  test('are deleted when they type their own email (case- and whitespace-insensitive)', async () => {
+    const googleUser = await makeUser('deleteGoogleOk');
+    const typed = `  ${googleUser.email.toUpperCase()} `;
+    await expect(userService.deleteAccount(googleUser.id, undefined, typed)).resolves.toEqual({ deleted: true });
+    expect(await prisma.user.findUnique({ where: { id: googleUser.id } })).toBeNull();
+  });
+
+  test('an account WITH a password cannot bypass it by typing its email', async () => {
+    const user = await makeUserWithPassword('deletePasswordBypass');
+    await expect(userService.deleteAccount(user.id, undefined, user.email)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(userService.deleteAccount(user.id, 'wrong password 9', user.email)).rejects.toMatchObject({
+      statusCode: 401,
+    });
+    expect(await prisma.user.findUnique({ where: { id: user.id } })).toBeTruthy();
+    await cleanupUsers(user);
+  });
+
+  test('still refuses while the account owns a workspace with other members', async () => {
+    const googleOwner = await makeUser('deleteGoogleOwner');
+    const mate = await makeUser('deleteGoogleMate');
+    await makeWorkspaceWithMembers(googleOwner, { editors: [mate] });
+    await expect(userService.deleteAccount(googleOwner.id, undefined, googleOwner.email)).rejects.toThrow(/other members/i);
+    await cleanupUsers(googleOwner, mate);
+  });
+});
+
+describe('getProfile — hasPassword', () => {
+  test('reports whether a password exists without ever returning the hash', async () => {
+    const withPw = await makeUserWithPassword('profileWithPw');
+    const without = await makeUser('profileNoPw');
+
+    const a = await userService.getProfile(withPw.id);
+    const b = await userService.getProfile(without.id);
+
+    expect(a.hasPassword).toBe(true);
+    expect(b.hasPassword).toBe(false);
+    expect(a).not.toHaveProperty('password');
+    expect(b).not.toHaveProperty('password');
+
+    await cleanupUsers(withPw, without);
+  });
+});

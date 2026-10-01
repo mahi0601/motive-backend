@@ -17,6 +17,9 @@ router.post(
   PaymentController.createCheckoutSession
 );
 
+// Manage billing: Stripe's hosted Customer Portal (needs a billing account).
+router.post('/portal', auth, PaymentController.createPortalSession);
+
 // Reconciliation fallback — see payment.service.js#reconcileSession.
 router.get('/session/:sessionId', auth, PaymentController.getCheckoutSession);
 

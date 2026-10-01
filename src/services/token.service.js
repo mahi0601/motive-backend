@@ -1,11 +1,18 @@
 const config = require('../config/env');
 const { signAccessToken, signRefreshToken } = require('../utils/jwt.util');
+const sessionService = require('./session.service');
 
-// Mint an access token (returned to the client) + a refresh token (set as cookie).
-exports.issueTokens = (user) => ({
-  accessToken: signAccessToken(user.id),
-  refreshToken: signRefreshToken(user.id, user.tokenVersion),
-});
+// Mint an access token (returned to the client in the response body) and a
+// refresh token (httpOnly cookie only). `session` is an existing Session row
+// when rotating; otherwise a new one is created — one per login.
+exports.issueTokens = async (user, { userAgent, session, gen } = {}) => {
+  const row = session || (await sessionService.create(user.id, userAgent));
+  const g = gen ?? row.gen ?? 0;
+  return {
+    accessToken: signAccessToken(user.id, { sid: row.id, ver: user.tokenVersion }),
+    refreshToken: signRefreshToken(user.id, user.tokenVersion, row.id, g),
+  };
+};
 
 const cookieOptions = () => ({
   httpOnly: true, // not readable by JS → immune to XSS token theft
