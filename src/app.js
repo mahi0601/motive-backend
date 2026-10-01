@@ -35,7 +35,20 @@ app.use(
 );
 // Stripe webhook needs the raw request body to verify the signature — must be
 // registered BEFORE express.json() so it isn't parsed/re-serialized first.
-app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentController.webhook);
+//
+// That ordering also puts it ahead of the global /api rate limiter below, so it
+// gets its own. It is public (authenticated only by the signature, which costs
+// an HMAC per request), so this just caps abuse: this app receives a handful of
+// events a minute, far under the cap, and Stripe retries anything it gets a 429
+// for, so a legitimate event is never lost.
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, try again later.' },
+});
+app.post('/api/payments/webhook', webhookLimiter, express.raw({ type: 'application/json' }), paymentController.webhook);
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));

@@ -10,13 +10,21 @@ const logger = require('../config/logger');
 // back on /google/callback was actually issued by OUR /google redirect, not
 // crafted by an attacker (see googleRedirect/googleCallback below).
 const OAUTH_STATE_COOKIE = 'motive_oauth_state';
-const oauthStateCookieOptions = () => ({
+const OAUTH_STATE_PATH = '/api/auth/google';
+const OAUTH_STATE_MAX_AGE_MS = 5 * 60 * 1000; // just long enough for the Google consent round-trip
+// Options for CLEARING the cookie: the same path/domain/flags it was set with,
+// but deliberately WITHOUT maxAge — Express turns maxAge into a future expiry,
+// so passing it to clearCookie() re-sets the cookie (blank, for another five
+// minutes) instead of deleting it. Setting the cookie is written out inline in
+// googleRedirect, not through a helper, so its httpOnly / secure flags are
+// visible right at the res.cookie() call (static analysis can't see through a
+// helper and reports them as missing).
+const oauthStateClearOptions = () => ({
   httpOnly: true,
   secure: config.cookie.secure,
   sameSite: config.cookie.sameSite,
   domain: config.cookie.domain,
-  path: '/api/auth/google',
-  maxAge: 5 * 60 * 1000, // just long enough for the Google consent round-trip
+  path: OAUTH_STATE_PATH,
 });
 
 // Matches capacitor.config.json's `appId` — the custom scheme the Android
@@ -110,7 +118,14 @@ exports.googleRedirect = asyncHandler(async (req, res) => {
     }
     cookieValue = `${nonce}.${challenge}`;
   }
-  res.cookie(OAUTH_STATE_COOKIE, cookieValue, oauthStateCookieOptions());
+  res.cookie(OAUTH_STATE_COOKIE, cookieValue, {
+    httpOnly: true,
+    secure: config.cookie.secure,
+    sameSite: config.cookie.sameSite,
+    domain: config.cookie.domain,
+    path: OAUTH_STATE_PATH,
+    maxAge: OAUTH_STATE_MAX_AGE_MS,
+  });
 
   // An invite token riding along on `?invite=` (see GoogleSignInButton.jsx —
   // Login/Register pass it through when the page itself was reached via an
@@ -155,7 +170,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   // googleRedirect — see the comment there. Single-use: clear it regardless
   // of outcome so a captured callback URL can't be replayed either.
   const [expectedNonce, codeChallenge] = (req.cookies?.[OAUTH_STATE_COOKIE] || '').split('.');
-  res.clearCookie(OAUTH_STATE_COOKIE, oauthStateCookieOptions());
+  res.clearCookie(OAUTH_STATE_COOKIE, oauthStateClearOptions());
   const [nonce, mode, inviteToken] = typeof state === 'string' ? state.split('.') : [];
   const stateValid = !!expectedNonce && nonce === expectedNonce;
   const isNative = mode === 'native';

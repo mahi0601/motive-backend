@@ -172,6 +172,19 @@ describe('HTTP routes', () => {
     });
   });
 
+  describe('Stripe webhook', () => {
+    test('is rate-limited — it is registered ahead of the global /api limiter, so it needs its own', async () => {
+      const post = () => request(app).post('/api/payments/webhook').set('Content-Type', 'application/json').send('{}');
+      const statuses = [];
+      for (let i = 0; i < 125; i += 1) statuses.push((await post()).status);
+
+      // Payments aren't configured in tests, so every un-throttled call is the
+      // signature failure (400). The 121st onwards must be throttled instead.
+      expect(statuses.slice(0, 120).every((c) => c === 400)).toBe(true);
+      expect(statuses.slice(120).every((c) => c === 429)).toBe(true);
+    });
+  });
+
   describe('billing', () => {
     test('the billing portal needs a billing account', async () => {
       const res = await request(app).post('/api/payments/portal').set(bearer(bob));
