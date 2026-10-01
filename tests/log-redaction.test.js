@@ -23,7 +23,7 @@ function memoryLogger() {
 }
 
 const SECRETS = {
-  refresh: 'SECRETREFRESHJWT.abc.def',
+  canaryCookie: 'CANARYCOOKIE.abc.def',
   csrf: 'SECRETCSRFNONCE',
   statusToken: 'SECRETSTATUSTOKEN0123456789abcdef',
   inviteToken: 'SECRETINVITETOKEN0123456789abcdef',
@@ -38,7 +38,7 @@ function buildApp(makeMiddleware) {
   app.use(makeMiddleware());
   // A login-like route: hands back the refresh cookie and a csrf redirect, exactly what leaks today.
   app.post('/api/auth/login', (req, res) => {
-    res.setHeader('Set-Cookie', `motive_rt=${SECRETS.refresh}; Path=/api/auth; HttpOnly; Secure; SameSite=None`);
+    res.setHeader('Set-Cookie', `motive_rt=${SECRETS.canaryCookie}; Path=/api/auth; HttpOnly; Secure; SameSite=None`);
     res.set('X-Csrf-Token', SECRETS.csrf);
     res.json({ success: true });
   });
@@ -52,7 +52,7 @@ function buildApp(makeMiddleware) {
 }
 
 async function exercise(app) {
-  await request(app).post('/api/auth/login').set('Authorization', `Bearer ${SECRETS.bearer}`).set('Cookie', `motive_rt=${SECRETS.refresh}`).set('X-CSRF-Token', SECRETS.csrf);
+  await request(app).post('/api/auth/login').set('Authorization', `Bearer ${SECRETS.bearer}`).set('Cookie', `motive_rt=${SECRETS.canaryCookie}`).set('X-CSRF-Token', SECRETS.csrf);
   await request(app).get(`/api/auth/google/callback?code=${SECRETS.oauthCode}&state=${SECRETS.oauthState}`);
   await request(app).get(`/api/status/${SECRETS.statusToken}`);
   await request(app).get(`/api/invites/${SECRETS.inviteToken}`);
@@ -96,7 +96,7 @@ describe('request logging', () => {
     const text = () => lines.join('');
     await exercise(buildApp(() => pinoHttp({ logger: legacy })));
     const out = text();
-    expect(out).toContain(SECRETS.refresh); // Set-Cookie response header
+    expect(out).toContain(SECRETS.canaryCookie); // Set-Cookie response header
     expect(out).toContain(SECRETS.statusToken); // URL path
     expect(out).toContain(SECRETS.inviteToken); // URL path
     expect(out).toContain(SECRETS.oauthCode); // query string
