@@ -15,6 +15,8 @@ services:
     healthCheckPath: /api/health
     autoDeploy: false # deploys are triggered by the GitHub Actions `deploy` job after CI passes
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
       # Render injects PORT automatically; the app reads process.env.PORT.

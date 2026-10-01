@@ -13,3 +13,5 @@ coverage
 # workspace settings by default.
 .vscode
 .idea
+.env.*
+!.env.example
