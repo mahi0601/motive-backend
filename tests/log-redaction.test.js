@@ -38,9 +38,13 @@ function buildApp(makeMiddleware) {
   app.use(makeMiddleware());
   // A login-like route: hands back the refresh cookie and a csrf redirect, exactly what leaks today.
   app.post('/api/auth/login', (req, res) => {
-    res.setHeader('Set-Cookie', `motive_rt=${SECRETS.canaryCookie}; Path=/api/auth; HttpOnly; Secure; SameSite=None`);
-    res.set('X-Csrf-Token', SECRETS.csrf);
-    res.json({ success: true });
+    // Raw writeHead: the point is a Set-Cookie header on the response, however it got there.
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'X-Csrf-Token': SECRETS.csrf,
+      'Set-Cookie': `motive_rt=${SECRETS.canaryCookie}; Path=/api/auth; HttpOnly; Secure; SameSite=None`,
+    });
+    res.end(JSON.stringify({ success: true }));
   });
   app.get('/api/auth/google/callback', (req, res) => res.redirect(`http://localhost:5173/dashboard?csrf=${SECRETS.csrf}`));
   app.get('/api/status/:token', (req, res) => res.status(404).json({ success: false }));
