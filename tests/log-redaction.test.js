@@ -22,7 +22,7 @@ function memoryLogger() {
   return { instance, text: () => lines.join('') };
 }
 
-const SECRETS = {
+const CANARIES = {
   canaryCookie: 'CANARYCOOKIE.abc.def',
   csrf: 'SECRETCSRFNONCE',
   statusToken: 'SECRETSTATUSTOKEN0123456789abcdef',
@@ -41,12 +41,12 @@ function buildApp(makeMiddleware) {
     // Raw writeHead: the point is a Set-Cookie header on the response, however it got there.
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'X-Csrf-Token': SECRETS.csrf,
-      'Set-Cookie': `motive_rt=${SECRETS.canaryCookie}; Path=/api/auth; HttpOnly; Secure; SameSite=None`,
+      'X-Csrf-Token': CANARIES.csrf,
+      'Set-Cookie': `motive_rt=${CANARIES.canaryCookie}; Path=/api/auth; HttpOnly; Secure; SameSite=None`,
     });
     res.end(JSON.stringify({ success: true }));
   });
-  app.get('/api/auth/google/callback', (req, res) => res.redirect(`http://localhost:5173/dashboard?csrf=${SECRETS.csrf}`));
+  app.get('/api/auth/google/callback', (req, res) => res.redirect(`http://localhost:5173/dashboard?csrf=${CANARIES.csrf}`));
   app.get('/api/status/:token', (req, res) => res.status(404).json({ success: false }));
   app.get('/api/invites/:token', (req, res) => res.status(404).json({ success: false }));
   app.post('/api/invites/:token/accept', (req, res) => res.json({ success: true }));
@@ -56,12 +56,12 @@ function buildApp(makeMiddleware) {
 }
 
 async function exercise(app) {
-  await request(app).post('/api/auth/login').set('Authorization', `Bearer ${SECRETS.bearer}`).set('Cookie', `motive_rt=${SECRETS.canaryCookie}`).set('X-CSRF-Token', SECRETS.csrf);
-  await request(app).get(`/api/auth/google/callback?code=${SECRETS.oauthCode}&state=${SECRETS.oauthState}`);
-  await request(app).get(`/api/status/${SECRETS.statusToken}`);
-  await request(app).get(`/api/invites/${SECRETS.inviteToken}`);
-  await request(app).post(`/api/invites/${SECRETS.inviteToken}/accept`);
-  await request(app).get(`/api/payments/session/${SECRETS.checkoutSession}`);
+  await request(app).post('/api/auth/login').set('Authorization', `Bearer ${CANARIES.bearer}`).set('Cookie', `motive_rt=${CANARIES.canaryCookie}`).set('X-CSRF-Token', CANARIES.csrf);
+  await request(app).get(`/api/auth/google/callback?code=${CANARIES.oauthCode}&state=${CANARIES.oauthState}`);
+  await request(app).get(`/api/status/${CANARIES.statusToken}`);
+  await request(app).get(`/api/invites/${CANARIES.inviteToken}`);
+  await request(app).post(`/api/invites/${CANARIES.inviteToken}/accept`);
+  await request(app).get(`/api/payments/session/${CANARIES.checkoutSession}`);
   await request(app).get('/api/tasks?workspaceId=ws1&page=2');
 }
 
@@ -100,11 +100,11 @@ describe('request logging', () => {
     const text = () => lines.join('');
     await exercise(buildApp(() => pinoHttp({ logger: legacy })));
     const out = text();
-    expect(out).toContain(SECRETS.canaryCookie); // Set-Cookie response header
-    expect(out).toContain(SECRETS.statusToken); // URL path
-    expect(out).toContain(SECRETS.inviteToken); // URL path
-    expect(out).toContain(SECRETS.oauthCode); // query string
-    expect(out).toContain(SECRETS.csrf); // x-csrf-token header
+    expect(out).toContain(CANARIES.canaryCookie); // Set-Cookie response header
+    expect(out).toContain(CANARIES.statusToken); // URL path
+    expect(out).toContain(CANARIES.inviteToken); // URL path
+    expect(out).toContain(CANARIES.oauthCode); // query string
+    expect(out).toContain(CANARIES.csrf); // x-csrf-token header
   });
 
   test('createHttpLogger() output contains no credential of any kind', async () => {
@@ -112,7 +112,7 @@ describe('request logging', () => {
     await exercise(buildApp(() => createHttpLogger(instance)));
     const out = text();
 
-    for (const [name, secret] of Object.entries(SECRETS)) {
+    for (const [name, secret] of Object.entries(CANARIES)) {
       expect({ name, leaked: out.includes(secret) }).toEqual({ name, leaked: false });
     }
     expect(out).not.toMatch(/set-cookie/i);
