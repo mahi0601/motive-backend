@@ -2,7 +2,7 @@
 // (express, http, etc.) is required, so its auto-instrumentation can hook
 // into them. This is why index.js requires this file first, ahead of even
 // ./config/env. See https://docs.sentry.io/platforms/node/
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const { scrubEvent, scrubBreadcrumb } = require('./utils/sentryScrub');
 

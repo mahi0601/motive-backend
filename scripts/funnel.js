@@ -1,7 +1,7 @@
 // Prints the product funnel: node scripts/funnel.js [--days 30]
 // Reads DATABASE_URL like the app does. Run it against production from a Render
 // shell, or locally against a copy.
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const analytics = require('../src/services/analytics.service');
 const prisma = require('../src/config/prisma');
 
