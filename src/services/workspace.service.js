@@ -5,11 +5,21 @@ const analytics = require('./analytics.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
+const { PLAN_LIMITS, PLAN_NAMES, NEXT_PLAN, effectivePlan } = require('../utils/plans');
 
-// Free tier: owner + 1 invited teammate (2 members total). Clientglass Pro
-// removes the cap — the first thing `isPro` actually gates.
-const FREE_MEMBER_LIMIT = 2;
+// Team size per workspace and the number of active clients depend on the owner's
+// plan — see utils/plans.js (Free: 2 members, 1 client; Studio: 5 and 10; Agency:
+// 15 and unlimited). The limits apply when something is ADDED, so an account that
+// is over a limit (an older free account, a lapsed subscriber) keeps what it has.
 const DAILY_INVITE_LIMIT = 20;
+
+// "Upgrade to X" wording shared by the limit errors below.
+const upgradeHint = (plan) => {
+  const next = NEXT_PLAN[plan];
+  return next ? ` — upgrade to Clientglass ${PLAN_NAMES[next]} for more.` : '.';
+};
+const memberLimitMessage = (plan) =>
+  `${PLAN_NAMES[plan]} workspaces are limited to ${PLAN_LIMITS[plan].members} members${upgradeHint(plan)}`;
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -202,7 +212,7 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
 
   const requester = await prisma.user.findUnique({
     where: { id: requesterId },
-    select: { name: true, isPro: true, emailVerifiedAt: true },
+    select: { name: true, isPro: true, proLifetime: true, plan: true, emailVerifiedAt: true },
   });
   // Invites send email from Clientglass's address to arbitrary people, so they are
   // the thing a throwaway account would abuse; require a proven address first.
@@ -215,8 +225,9 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   if (sentToday >= DAILY_INVITE_LIMIT) {
     throw new AppError('You have reached the daily invite limit — try again tomorrow.', 429);
   }
-  if (!requester.isPro) {
-    // Pending invites hold a seat too, or a free workspace could queue up any
+  {
+    const plan = effectivePlan(requester);
+    // Pending invites hold a seat too, or a workspace could queue up any
     // number of invites and only hit the limit as they are accepted.
     const [memberCount, pendingElsewhere] = await Promise.all([
       prisma.workspaceMember.count({ where: { workspaceId } }),
@@ -224,10 +235,8 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
         where: { workspaceId, status: 'pending', expiresAt: { gt: new Date() }, email: { not: normalizedEmail } },
       }),
     ]);
-    if (memberCount + pendingElsewhere >= FREE_MEMBER_LIMIT) {
-      throw AppError.paymentRequired(
-        `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Clientglass Pro to invite more.`
-      );
+    if (memberCount + pendingElsewhere >= PLAN_LIMITS[plan].members) {
+      throw AppError.paymentRequired(memberLimitMessage(plan));
     }
   }
 
@@ -340,15 +349,23 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
   const invite = await findInviteForResponse(rawToken, userEmail);
 
   // The seat limit is checked again here, not only when the invite was sent: the
-  // workspace may have filled up, or the owner's Pro may have ended, since.
+  // workspace may have filled up, or the owner's plan may have changed, since.
   const [inviteWorkspace, existingMembership] = await Promise.all([
-    prisma.workspace.findUnique({ where: { id: invite.workspaceId }, select: { owner: { select: { isPro: true } } } }),
+    prisma.workspace.findUnique({
+      where: { id: invite.workspaceId },
+      select: { owner: { select: { isPro: true, proLifetime: true, plan: true } } },
+    }),
     prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } } }),
   ]);
-  if (!existingMembership && inviteWorkspace && !inviteWorkspace.owner.isPro) {
+  if (!existingMembership && inviteWorkspace) {
+    const plan = effectivePlan(inviteWorkspace.owner);
     const memberCount = await prisma.workspaceMember.count({ where: { workspaceId: invite.workspaceId } });
-    if (memberCount >= FREE_MEMBER_LIMIT) {
-      throw AppError.paymentRequired('This workspace has reached its member limit — ask its owner to upgrade to Clientglass Pro.');
+    if (memberCount >= PLAN_LIMITS[plan].members) {
+      throw AppError.paymentRequired(
+        NEXT_PLAN[plan]
+          ? `This workspace has reached its member limit — ask its owner to upgrade to Clientglass ${PLAN_NAMES[NEXT_PLAN[plan]]}.`
+          : 'This workspace has reached its member limit.'
+      );
     }
   }
 
@@ -465,8 +482,31 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
 //
 // Calling enableShare again rotates the link — the old one stops working
 // immediately, which is the "regenerate" action in the UI.
+//
+// Turning on a link makes the workspace an ACTIVE CLIENT, which is what plans
+// are priced by. Regenerating the link of a page that is already live adds no
+// client, so it is never refused (an account over its limit can still do it).
 exports.enableShare = async (workspaceId, requesterId) => {
   await assertOwner(workspaceId, requesterId);
+  const current = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { shareEnabledAt: true } });
+  if (!current?.shareEnabledAt) {
+    const owner = await prisma.user.findUnique({
+      where: { id: requesterId },
+      select: { isPro: true, proLifetime: true, plan: true },
+    });
+    const plan = effectivePlan(owner);
+    const limit = PLAN_LIMITS[plan].clients;
+    if (Number.isFinite(limit)) {
+      const live = await prisma.workspace.count({
+        where: { ownerId: requesterId, shareEnabledAt: { not: null }, id: { not: workspaceId } },
+      });
+      if (live >= limit) {
+        throw AppError.paymentRequired(
+          `${PLAN_NAMES[plan]} includes ${limit} active client ${limit === 1 ? 'page' : 'pages'}${upgradeHint(plan)}`
+        );
+      }
+    }
+  }
   const { raw, tokenHash } = newInviteToken();
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },

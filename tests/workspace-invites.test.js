@@ -27,7 +27,7 @@ describe('workspace invite lifecycle', () => {
 
   beforeAll(async () => {
     // isPro: true so the free-tier member cap (a real, separate business
-    // rule — see workspace.service.js's own FREE_MEMBER_LIMIT check) doesn't
+    // rule — see workspace.service.js's own plan member limit) doesn't
     // interfere with what these tests are actually about: invite
     // authorization and the accept-by-email-match logic. The fixture
     // workspace already sits at exactly the free limit (owner + editor = 2)

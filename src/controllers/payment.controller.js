@@ -8,7 +8,7 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const user = await UserService.getProfile(req.user.id);
   if (!user) throw AppError.notFound('User not found');
 
-  const { url } = await PaymentService.createCheckoutSession(user, req.body.currency);
+  const { url } = await PaymentService.createCheckoutSession(user, req.body.currency, req.body.plan);
   res.status(200).json({ success: true, url });
 });
 

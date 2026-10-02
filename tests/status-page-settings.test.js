@@ -61,9 +61,16 @@ describe('status page details', () => {
   });
 
   test('an empty page has sensible nulls and the default accent', async () => {
-    const fresh = await makeWorkspaceWithMembers(owner);
-    const view = await publicView(fresh, owner);
-    expect(view.body.status.page).toEqual({ headline: null, summary: null, milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false });
+    // Its own owner: a free account runs one active client page, and `owner`
+    // already has one live (see plan-limits.test.js).
+    const other = await makeUser('spFresh');
+    try {
+      const fresh = await makeWorkspaceWithMembers(other);
+      const view = await publicView(fresh, other);
+      expect(view.body.status.page).toEqual({ headline: null, summary: null, milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false });
+    } finally {
+      await cleanupUsers(other);
+    }
   });
 
   test('sending an empty string clears a field', async () => {

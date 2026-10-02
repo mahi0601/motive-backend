@@ -52,7 +52,7 @@ describe('query strings', () => {
 });
 
 describe('checkout idempotency', () => {
-  const proPricing = config.stripe.proPricing;
+  const proPricing = config.stripe.plans.studio;
   let user;
   beforeAll(async () => {
     user = await makeUser('coUser');

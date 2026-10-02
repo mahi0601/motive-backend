@@ -88,6 +88,11 @@ model User {
   // Pro forever regardless of any subscription's lifecycle.
   isPro            Boolean  @default(false)
   proLifetime      Boolean  @default(false)
+  // Which PAID tier ('studio' | 'agency'), set by the Stripe webhook; 'free'
+  // otherwise. Never read directly: `effectivePlan` (utils/plans.js) combines it
+  // with isPro/proLifetime, so a lapsed subscriber or a lifetime user can't be
+  // given the wrong limits by a stale value here.
+  plan             String   @default("free")
   stripeCustomerId String?
   // Monthly subscription state, kept in sync by Stripe webhooks (see
   // payment.service.js). stripeSubscriptionId is globally omitted from queries
