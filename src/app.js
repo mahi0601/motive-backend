@@ -2,6 +2,7 @@
 // Builds the Express app and nothing else — no listening, no sockets, no
 // process-level handlers — so tests (supertest) can import it without binding
 // a port. server.js is what actually boots it.
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -24,6 +25,11 @@ const app = express();
 // Behind a load balancer / reverse proxy in production: trust X-Forwarded-* so
 // rate-limiting and req.ip work correctly.
 if (config.isProd) app.set('trust proxy', 1);
+
+// Query strings: the simple parser makes every value a plain string (or an array
+// when a name repeats). The default parser also turns ?a[b]=c into nested OBJECTS,
+// which would then flow into database filters. Handlers can rely on plain strings.
+app.set('query parser', 'simple');
 
 // ── Security & parsing middleware ───────────────────────
 app.use(helmet());
@@ -84,6 +90,14 @@ app.use(
   })
 );
 
+// A repeated query parameter (?x=1&x=2) would arrive as an array, a shape no
+// handler expects. Refuse it outright instead of letting each one trip over it.
+app.use('/api', (req, res, next) => {
+  const repeated = Object.keys(req.query).find((k) => Array.isArray(req.query[k]));
+  if (repeated) return res.status(400).json({ success: false, message: 'Repeated query parameters are not allowed.' });
+  next();
+});
+
 // ── Rate limiting ───────────────────────────────────────
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false }));
 
@@ -96,6 +110,22 @@ const credentialLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts, try again later.' },
 });
+// One account is guessable from many addresses (a botnet, rotating proxies), which
+// the per-ip limit above cannot see. This one is keyed on the email being tried,
+// normalised, so ten wrong guesses at an account lock it for the window no matter
+// where they come from. The key is a hash: the address is never kept in memory
+// as a plain string key, and the 429 says nothing about whether the account exists.
+const accountLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `login:${crypto.createHash('sha256').update(String(req.body?.email || '').trim().toLowerCase()).digest('hex')}`,
+  skip: (req) => !req.body?.email, // validation rejects these anyway
+  validate: { keyGeneratorIpFallback: false },
+  message: { success: false, message: 'Too many attempts, try again later.' },
+});
+app.use('/api/auth/login', accountLoginLimiter);
 app.use('/api/auth/login', credentialLimiter);
 app.use('/api/auth/register', credentialLimiter);
 app.use('/api/auth/forgot-password', credentialLimiter);

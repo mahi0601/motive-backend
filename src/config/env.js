@@ -10,8 +10,16 @@ if (missing.length) {
   process.exit(1);
 }
 
-if (process.env.NODE_ENV === 'production' && process.env.JWT_SECRET.length < 32) {
-  console.error('❌ JWT_SECRET must be at least 32 chars in production.');
+// Short signing secrets are tolerated only for local work. Anything that is not
+// explicitly development or test (production, staging, a preview deploy, or a
+// typo'd NODE_ENV) must use a real secret.
+const isLocal = !process.env.NODE_ENV || ['development', 'test'].includes(process.env.NODE_ENV);
+if (!isLocal && process.env.JWT_SECRET.length < 32) {
+  console.error('❌ JWT_SECRET must be at least 32 chars outside development and test.');
+  process.exit(1);
+}
+if (!isLocal && process.env.JWT_REFRESH_SECRET && process.env.JWT_REFRESH_SECRET.length < 32) {
+  console.error('❌ JWT_REFRESH_SECRET must be at least 32 chars outside development and test.');
   process.exit(1);
 }
 
@@ -22,6 +30,14 @@ const config = {
   databaseUrl: process.env.DATABASE_URL,
   jwt: {
     secret: process.env.JWT_SECRET,
+    // Refresh tokens can be signed with their own secret, so leaking one key does
+    // not let anyone forge the other kind of token. Falls back to JWT_SECRET when
+    // unset, so an existing deployment keeps working until it opts in.
+    refreshSecret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+    // Who issued a token, and who it is for. Verification requires both, so a
+    // token minted by another service that shares a secret is not accepted.
+    issuer: process.env.JWT_ISSUER || 'clientglass-api',
+    audience: process.env.JWT_AUDIENCE || 'clientglass-app',
     // Short-lived access token (Authorization header) + long-lived refresh token (httpOnly cookie).
     accessExpiresIn: process.env.ACCESS_TOKEN_TTL || '15m',
     refreshExpiresIn: process.env.REFRESH_TOKEN_TTL || '30d',

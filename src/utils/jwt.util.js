@@ -2,6 +2,13 @@ const jwt = require('jsonwebtoken');
 const config = require('../config/env');
 
 // No insecure fallback secret — config.js guarantees JWT_SECRET exists at boot.
+//
+// Every token is signed HS256 with this API's issuer and audience, and verified
+// with the algorithm PINNED to HS256 and the issuer/audience required. The "alg"
+// header of an incoming token is attacker-controlled, so it is never trusted to
+// choose how the token is checked.
+const SIGN = () => ({ algorithm: 'HS256', issuer: config.jwt.issuer, audience: config.jwt.audience });
+const VERIFY = () => ({ algorithms: ['HS256'], issuer: config.jwt.issuer, audience: config.jwt.audience });
 // A `type` claim distinguishes access vs refresh tokens so one can't be used as the other.
 
 // `sid` ties the token to a Session row (services/session.service.js) and
@@ -9,6 +16,7 @@ const config = require('../config/env');
 // token immediately instead of when it expires.
 exports.signAccessToken = (userId, { sid, ver } = {}) =>
   jwt.sign({ id: userId, type: 'access', sid, ver }, config.jwt.secret, {
+    ...SIGN(),
     expiresIn: config.jwt.accessExpiresIn,
   });
 
@@ -17,7 +25,8 @@ exports.signAccessToken = (userId, { sid, ver } = {}) =>
 // cross-site defence for the endpoints that read it are explained in
 // session.service.js and middlewares/sameSite.middleware.js.
 exports.signRefreshToken = (userId, tokenVersion, sid, gen) =>
-  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion, sid, gen }, config.jwt.secret, {
+  jwt.sign({ id: userId, type: 'refresh', ver: tokenVersion, sid, gen }, config.jwt.refreshSecret, {
+    ...SIGN(),
     expiresIn: config.jwt.refreshExpiresIn,
   });
 
@@ -28,6 +37,7 @@ exports.signRefreshToken = (userId, tokenVersion, sid, gen) =>
 // unused reset link too.
 exports.signResetToken = (userId, tokenVersion) =>
   jwt.sign({ id: userId, type: 'reset', ver: tokenVersion }, config.jwt.secret, {
+    ...SIGN(),
     expiresIn: '30m',
   });
 
@@ -36,8 +46,13 @@ exports.signResetToken = (userId, tokenVersion) =>
 // useless for anything else (every consumer checks `type`).
 exports.signVerifyToken = (userId, email) =>
   jwt.sign({ id: userId, type: 'verify', email: String(email).toLowerCase() }, config.jwt.secret, {
+    ...SIGN(),
     expiresIn: '24h',
   });
 
 // Throws on invalid/expired tokens; the error middleware maps it to 401.
-exports.verifyToken = (token) => jwt.verify(token, config.jwt.secret);
+// `kind` picks the key: refresh tokens are checked with the refresh secret,
+// everything else (access, reset, verify) with the main one. Callers still check
+// the token's `type` claim afterwards.
+exports.verifyToken = (token, kind = 'access') =>
+  jwt.verify(token, kind === 'refresh' ? config.jwt.refreshSecret : config.jwt.secret, VERIFY());
