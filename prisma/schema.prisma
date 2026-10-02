@@ -73,6 +73,12 @@ model User {
   // gates things that can be abused from a throwaway account (sending invites)
   // and decides whether linking Google may keep an existing password.
   emailVerifiedAt  DateTime?
+  // Set when the person ticked "I am 16 or older and agree to the Terms and
+  // Privacy Policy" at sign-up, with the version they saw (config/legal.js). Null
+  // for accounts that predate the checkbox and for Google sign-ups, which have no
+  // checkbox yet.
+  termsAcceptedAt  DateTime?
+  termsVersion     String?
   avatar           String   @default("")
   // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
   // endpoint's week/month/quarter ranges in the user's own day, instead of

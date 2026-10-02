@@ -3,6 +3,7 @@ const validator = require('validator');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const config = require('../config/env');
+const { TERMS_VERSION } = require('../config/legal');
 const { verifyToken, signResetToken, signVerifyToken } = require('../utils/jwt.util');
 const { hashPassword, comparePassword } = require('../utils/password.util');
 const tokenService = require('./token.service');
@@ -72,12 +73,15 @@ exports.resendVerification = async (userId) => {
   await sendVerificationEmail(user);
 };
 
-exports.register = async ({ name, email, password }, ctx) => {
+exports.register = async ({ name, email, password, acceptTerms }, ctx) => {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw AppError.conflict('Email already in use');
 
+  // The route refuses a sign-up without a clear yes. Only that yes is recorded,
+  // with the time and version set here: a caller never supplies either.
+  const accepted = acceptTerms === true ? { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION } : {};
   const user = await prisma.user.create({
-    data: { name, email, password: await hashPassword(password) },
+    data: { name, email, password: await hashPassword(password), ...accepted },
   });
   await sendVerificationEmail(user);
   await analytics.track('signup', { userId: user.id });
