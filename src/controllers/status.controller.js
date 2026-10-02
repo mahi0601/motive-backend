@@ -7,7 +7,11 @@ const asyncHandler = require('../utils/asyncHandler');
 // WorkspaceService#getStatusByToken for exactly what it may expose.
 exports.getByToken = asyncHandler(async (req, res) => {
   const visitor = analytics.visitorKey({ ip: req.ip, userAgent: req.get('user-agent') });
-  const status = await WorkspaceService.getStatusByToken(req.params.token, { visitor });
+  // Settings opens the owner's own link with ?preview=1 so a preview isn't counted
+  // as a client looking. Only that exact value counts; anyone can add it, which
+  // can only ever UNDER-count views, never inflate them.
+  const preview = req.query.preview === '1';
+  const status = await WorkspaceService.getStatusByToken(req.params.token, { visitor, preview });
   // A rotated or disabled link must stop working immediately, so nothing
   // between the server and the viewer may cache this response.
   res.set('Cache-Control', 'no-store');
@@ -20,4 +24,14 @@ exports.submitFeedback = asyncHandler(async (req, res) => {
   await FeedbackService.submit(req.params.token, req.body);
   res.set('Cache-Control', 'no-store');
   res.status(201).json({ success: true });
+});
+
+// Public and body-less: the marketing page reports that a visitor arrived via a
+// status page footer. Stores the daily visitor hash and nothing from the request
+// body, so there is nothing to forge beyond "one more visit" (and the route's
+// rate limit caps even that).
+exports.landingFromStatus = asyncHandler(async (req, res) => {
+  const visitor = analytics.visitorKey({ ip: req.ip, userAgent: req.get('user-agent') });
+  await analytics.track('landing_from_status', { visitor });
+  res.status(204).end();
 });

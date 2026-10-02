@@ -583,7 +583,7 @@ const STATUS_PAGE_TASK_LIMIT = 200;
 // ids, no assignees or other people, no descriptions, no comments or files —
 // just a title, a status and dates. The owner is warned in the UI that task
 // titles become public.
-exports.getStatusByToken = async (rawToken, { visitor } = {}) => {
+exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
@@ -605,8 +605,9 @@ exports.getStatusByToken = async (rawToken, { visitor } = {}) => {
   // Unknown, rotated and disabled links are indistinguishable on purpose.
   if (!ws) throw AppError.notFound('This status page is not available');
 
-  // Count a view only for a link that works. Fire and forget: never slows the page.
-  analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
+  // Count a view only for a link that works, and not for the owner's own preview.
+  // Fire and forget: never slows the page.
+  if (!preview) analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
 
   // Approved = the latest approve-or-request-changes on THIS version of the
   // milestone was an approval. Only the date is exposed: the sender's typed name
