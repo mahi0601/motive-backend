@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 // Fail fast at boot if critical config is missing or insecure, rather than
 // discovering it on the first request in production.
