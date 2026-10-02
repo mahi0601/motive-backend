@@ -21,7 +21,7 @@ const getStripe = () => {
 // the next customer.subscription.updated/deleted event turns into isPro=false.
 const ACTIVE_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'];
 
-// Motive Pro is a monthly subscription — Stripe Checkout in `subscription` mode.
+// Clientglass Pro is a monthly subscription — Stripe Checkout in `subscription` mode.
 // `currency` picks which price/currency the buyer pays in. No payment-method
 // list is passed: Checkout then shows whatever is enabled in the Dashboard AND
 // valid for a recurring payment in that currency (cards and wallets in general;
@@ -53,7 +53,7 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
       {
         price_data: {
           currency,
-          product_data: { name: 'Motive Pro — monthly' },
+          product_data: { name: 'Clientglass Pro — monthly' },
           unit_amount: pricing.amount,
           recurring: { interval: 'month' },
         },

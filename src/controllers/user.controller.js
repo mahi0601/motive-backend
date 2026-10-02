@@ -18,7 +18,7 @@ exports.updateUserProfile = asyncHandler(async (req, res) => {
 exports.exportData = asyncHandler(async (req, res) => {
   const data = await UserService.exportData(req.user.id);
   res.set('Cache-Control', 'no-store');
-  res.set('Content-Disposition', `attachment; filename="motive-export-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.set('Content-Disposition', `attachment; filename="clientglass-export-${new Date().toISOString().slice(0, 10)}.json"`);
   res.status(200).json(data);
 });
 

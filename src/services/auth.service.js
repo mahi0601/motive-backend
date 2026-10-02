@@ -39,10 +39,10 @@ const sendVerificationEmail = async (user) => {
   const url = `${config.frontendUrl}/verify-email?token=${signVerifyToken(user.id, user.email)}`;
   await emailService.sendEmail({
     to: user.email,
-    subject: 'Confirm your email for Motive',
-    html: `<p>Confirm this is your email address so you can invite teammates to Motive.</p>
+    subject: 'Confirm your email for Clientglass',
+    html: `<p>Confirm this is your email address so you can invite teammates to Clientglass.</p>
 <p><a href="${url}">Confirm my email</a>. This link expires in 24 hours.</p>
-<p>If you didn't create a Motive account, you can safely ignore this email.</p>`,
+<p>If you didn't create a Clientglass account, you can safely ignore this email.</p>`,
   });
 };
 
@@ -137,7 +137,7 @@ exports.loginWithGoogle = async (code, ctx) => {
   // actually checked — an account-linking flow (the `else if (!user.googleId)`
   // branch below) that trusts an *unverified* email is exactly how someone
   // registers `alice@x.com` at Google without owning it and gets silently
-  // logged into the existing Motive account with that email.
+  // logged into the existing Clientglass account with that email.
   if (!profile.verified_email) {
     throw AppError.unauthorized('Your Google email address is not verified.');
   }
@@ -320,8 +320,8 @@ exports.forgotPassword = async (email) => {
   const resetUrl = `${config.frontendUrl}/reset-password?token=${token}`;
   await emailService.sendEmail({
     to: user.email,
-    subject: 'Reset your Motive password',
-    html: `<p>Someone requested a password reset for your Motive account.</p>
+    subject: 'Reset your Clientglass password',
+    html: `<p>Someone requested a password reset for your Clientglass account.</p>
 <p><a href="${resetUrl}">Click here to set a new password</a>. This link expires in 30 minutes.</p>
 <p>If you didn't request this, you can safely ignore this email.</p>`,
   });

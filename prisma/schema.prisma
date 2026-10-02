@@ -134,7 +134,7 @@ model Workspace {
   // anyone with the link, plain text only (length limits are enforced in
   // validators/workspace.validator.js). `statusAccent` is a key from
   // utils/statusAccents.js, never a free colour value. Hiding the "Powered by
-  // Motive" footer is a Pro feature, checked on write and again when served.
+  // Clientglass" footer is a Pro feature, checked on write and again when served.
   statusHeadline     String?
   statusSummary      String?
   milestoneTitle     String?
@@ -207,7 +207,7 @@ model WorkspaceMember {
   @@index([userId])
 }
 
-// Lets an invite reach someone who doesn't have a Motive account yet —
+// Lets an invite reach someone who doesn't have a Clientglass account yet —
 // `inviteMember` used to require an existing account, which defeated the
 // point of inviting someone. `tokenHash` is sha256(raw); the raw token only
 // ever exists in the invite email, never stored — see workspace.service.js.

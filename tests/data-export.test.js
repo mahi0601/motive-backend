@@ -57,7 +57,7 @@ describe('GET /api/users/me/export', () => {
   test('contains what the user owns or wrote, as a downloadable JSON file', async () => {
     const res = await get(alice);
     expect(res.status).toBe(200);
-    expect(res.headers['content-disposition']).toMatch(/attachment; filename="motive-export-.*\.json"/);
+    expect(res.headers['content-disposition']).toMatch(/attachment; filename="clientglass-export-.*\.json"/);
     expect(res.headers['cache-control']).toMatch(/no-store/);
     const d = res.body;
     expect(d.exportedAt).toBeTruthy();

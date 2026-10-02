@@ -28,7 +28,7 @@ exports.upload = async (file, taskId, userId) => {
   const quota = user?.isPro ? QUOTA_BYTES.pro : QUOTA_BYTES.free;
   if ((used._sum.size || 0) + size > quota) {
     throw new AppError(
-      `You have used your ${Math.round(quota / MB)} MB of file storage — delete some files${user?.isPro ? '' : ' or upgrade to Motive Pro'} to upload more.`,
+      `You have used your ${Math.round(quota / MB)} MB of file storage — delete some files${user?.isPro ? '' : ' or upgrade to Clientglass Pro'} to upload more.`,
       413
     );
   }

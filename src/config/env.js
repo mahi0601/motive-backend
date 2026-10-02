@@ -63,7 +63,7 @@ const config = {
   },
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',
-    fromEmail: process.env.EMAIL_FROM || 'Motive <onboarding@resend.dev>',
+    fromEmail: process.env.EMAIL_FROM || 'Clientglass <onboarding@resend.dev>',
   },
   // Cloudflare R2 (S3-compatible). Optional — see storage.service.js: when
   // unset, uploads fall back to local disk (fine for dev, NOT for

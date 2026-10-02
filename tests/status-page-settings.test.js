@@ -1,6 +1,6 @@
 // The owner can brand the public client status page: a headline, a summary, the
 // next milestone, an accent colour from a fixed preset list, and (Pro only)
-// hiding the "Powered by Motive" footer. Everything here becomes PUBLIC, so the
+// hiding the "Powered by Clientglass" footer. Everything here becomes PUBLIC, so the
 // tests pin who may set it, what is accepted, that it is only ever text, and
 // that the public response still exposes nothing internal.
 const request = require('supertest');
@@ -100,7 +100,7 @@ describe('status page details', () => {
     expect(ACCENTS).toEqual(['teal', 'blue', 'violet', 'rose', 'amber', 'slate']);
   });
 
-  describe('hiding "Powered by Motive" is a Pro feature', () => {
+  describe('hiding "Powered by Clientglass" is a Pro feature', () => {
     test('a free owner is refused with 402 and the setting does not change', async () => {
       const res = await patch(ws, owner, { hideBranding: true });
       expect(res.status).toBe(402);

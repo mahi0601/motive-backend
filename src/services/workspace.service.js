@@ -6,7 +6,7 @@ const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
 
-// Free tier: owner + 1 invited teammate (2 members total). Motive Pro
+// Free tier: owner + 1 invited teammate (2 members total). Clientglass Pro
 // removes the cap — the first thing `isPro` actually gates.
 const FREE_MEMBER_LIMIT = 2;
 const DAILY_INVITE_LIMIT = 20;
@@ -52,34 +52,34 @@ const escapeHtml = (value) =>
     .replace(/'/g, '&#39;');
 
 // The reversed (white-on-transparent) logo served by the frontend — generated
-// by `npm run brand` in the frontend repo at 2× (246×80), shown here at half
+// by `npm run brand` in the frontend repo at 2× (346×80), shown here at half
 // size so it stays sharp on retina screens. Email clients don't render SVG, hence
 // a PNG, and it must be an absolute URL, hence frontendUrl. The deployed
 // frontend has to be live for it to show; until then (or if a client blocks
-// images) the `alt` text below keeps "Motive" visible in the same white bold.
-const EMAIL_LOGO_WIDTH = 123;
+// images) the `alt` text below keeps "Clientglass" visible in the same white bold.
+const EMAIL_LOGO_WIDTH = 173;
 const EMAIL_LOGO_HEIGHT = 40;
 
 const sendInviteEmail = async (invite, workspace, inviterName, rawToken) => {
   const acceptUrl = `${config.frontendUrl}/invite/${rawToken}`;
   const logoUrl = `${config.frontendUrl}/brand/logo-email.png`;
   // User-controlled strings go into HTML below — escape them so a workspace
-  // or inviter name can't inject markup into an email sent from Motive's address.
+  // or inviter name can't inject markup into an email sent from Clientglass's address.
   const safeWorkspaceName = escapeHtml(workspace.name);
   const safeInviterName = escapeHtml(inviterName);
   const roleLabel = invite.role === 'viewer' ? 'a viewer' : 'an editor';
   await emailService.sendEmail({
     to: invite.email,
-    subject: `You're invited to join ${workspace.name} on Motive`,
+    subject: `You're invited to join ${workspace.name} on Clientglass`,
     html: `<div style="background:#F6F8F9;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <div style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;border:1px solid #DDE4E7;overflow:hidden;">
     <div style="background-color:#0E4C5C;background-image:linear-gradient(135deg,#0E4C5C,#1B7A8C);padding:24px 32px;">
-      <img src="${logoUrl}" alt="Motive" width="${EMAIL_LOGO_WIDTH}" height="${EMAIL_LOGO_HEIGHT}" style="display:block;border:0;outline:none;height:${EMAIL_LOGO_HEIGHT}px;width:auto;color:#FFFFFF;font-size:18px;font-weight:700;line-height:${EMAIL_LOGO_HEIGHT}px;">
+      <img src="${logoUrl}" alt="Clientglass" width="${EMAIL_LOGO_WIDTH}" height="${EMAIL_LOGO_HEIGHT}" style="display:block;border:0;outline:none;height:${EMAIL_LOGO_HEIGHT}px;width:auto;color:#FFFFFF;font-size:18px;font-weight:700;line-height:${EMAIL_LOGO_HEIGHT}px;">
     </div>
     <div style="padding:32px;">
       <h1 style="margin:0 0 16px;font-size:20px;color:#0F1A20;">You're invited to ${safeWorkspaceName}</h1>
       <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5E6E77;">
-        <strong style="color:#0F1A20;">${safeInviterName}</strong> invited you to join <strong style="color:#0F1A20;">${safeWorkspaceName}</strong> on Motive as ${roleLabel}.
+        <strong style="color:#0F1A20;">${safeInviterName}</strong> invited you to join <strong style="color:#0F1A20;">${safeWorkspaceName}</strong> on Clientglass as ${roleLabel}.
       </p>
       <a href="${acceptUrl}" style="display:inline-block;background:#1B7A8C;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 24px;border-radius:8px;">Accept invite</a>
       <p style="margin:24px 0 0;font-size:13px;color:#5E6E77;">This link expires in 7 days. If you weren't expecting this, you can safely ignore this email.</p>
@@ -204,7 +204,7 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
     where: { id: requesterId },
     select: { name: true, isPro: true, emailVerifiedAt: true },
   });
-  // Invites send email from Motive's address to arbitrary people, so they are
+  // Invites send email from Clientglass's address to arbitrary people, so they are
   // the thing a throwaway account would abuse; require a proven address first.
   if (!requester.emailVerifiedAt) {
     throw AppError.forbidden('Verify your email address before inviting people — check your inbox for the confirmation link.');
@@ -226,7 +226,7 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
     ]);
     if (memberCount + pendingElsewhere >= FREE_MEMBER_LIMIT) {
       throw AppError.paymentRequired(
-        `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Motive Pro to invite more.`
+        `Free workspaces are limited to ${FREE_MEMBER_LIMIT} members — upgrade to Clientglass Pro to invite more.`
       );
     }
   }
@@ -348,7 +348,7 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
   if (!existingMembership && inviteWorkspace && !inviteWorkspace.owner.isPro) {
     const memberCount = await prisma.workspaceMember.count({ where: { workspaceId: invite.workspaceId } });
     if (memberCount >= FREE_MEMBER_LIMIT) {
-      throw AppError.paymentRequired('This workspace has reached its member limit — ask its owner to upgrade to Motive Pro.');
+      throw AppError.paymentRequired('This workspace has reached its member limit — ask its owner to upgrade to Clientglass Pro.');
     }
   }
 
@@ -490,7 +490,7 @@ exports.disableShare = async (workspaceId, requesterId) => {
 // Owner-only edit of what the public status page says about the project. See
 // the Workspace model for what each field is. Only fields present in `input`
 // are touched; '' (or null for the date) clears one. Hiding the "Powered by
-// Motive" footer needs Pro: refused here for a free owner, and the public read
+// Clientglass" footer needs Pro: refused here for a free owner, and the public read
 // below re-checks it so a lapsed Pro brings the footer back without a write.
 exports.assertOwner = (...args) => assertOwner(...args);
 
@@ -522,7 +522,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   if (data.statusHideBranding === true) {
     const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
     if (!owner?.isPro) {
-      throw AppError.paymentRequired('Hiding "Powered by Motive" is part of Motive Pro.');
+      throw AppError.paymentRequired('Hiding "Powered by Clientglass" is part of Clientglass Pro.');
     }
   }
 

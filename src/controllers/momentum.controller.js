@@ -12,7 +12,7 @@ exports.getMomentum = asyncHandler(async (req, res) => {
   // personal view rather than silently assuming a team view was honored.
   const { timezone, isPro } = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true, isPro: true } });
 
-  // Motive Pro gate: This week is free; Month/Quarter (and the deeper
+  // Clientglass Pro gate: This week is free; Month/Quarter (and the deeper
   // insight history that comes with a longer window) are Pro-only. Silently
   // downgrading to 'week' rather than erroring — a stale/bookmarked
   // ?period=month link for a since-downgraded account should degrade
