@@ -84,12 +84,21 @@ exports.register = async ({ name, email, password }, ctx) => {
   return result(user, ctx);
 };
 
+// A real bcrypt hash of a random string nobody knows. When there is no real hash
+// to compare against (unknown email, or a Google-only account), the comparison is
+// run against this anyway, so those requests take as long as a wrong password on
+// a real account and the response time does not reveal which emails are
+// registered. Its result is ignored.
+let dummyHashPromise;
+const dummyHash = () => (dummyHashPromise ||= hashPassword(crypto.randomBytes(24).toString('hex')));
+
 exports.login = async ({ email, password }, ctx) => {
   // Password is globally omitted — opt back in just for this check.
   const user = await prisma.user.findUnique({ where: { email }, omit: { password: false } });
-  // No password set → a Google-only account; there's nothing to compare
+  // No password set → a Google-only account; there's nothing real to compare
   // against (and bcrypt.compare would throw on a null hash, not just fail).
   if (!user || !user.password) {
+    await comparePassword(typeof password === 'string' ? password : '', await dummyHash());
     // Unknown address or a Google-only account: recorded without the address.
     await audit.record({ type: 'login_failed', targetUserId: user?.id });
     throw AppError.unauthorized('Invalid credentials');
@@ -260,7 +269,7 @@ exports.refresh = async (refreshToken) => {
 
   let payload;
   try {
-    payload = verifyToken(refreshToken);
+    payload = verifyToken(refreshToken, 'refresh');
   } catch (err) {
     logTokenFailure('Refresh token rejected', err);
     throw AppError.unauthorized('Invalid refresh token');
@@ -290,7 +299,7 @@ exports.revokeAll = async (userId) => {
 exports.logout = async (refreshToken) => {
   if (!refreshToken) return;
   try {
-    const payload = verifyToken(refreshToken);
+    const payload = verifyToken(refreshToken, 'refresh');
     // An access token or password-reset token planted in the cookie slot must
     // not be able to end sessions.
     if (payload.type !== 'refresh') {

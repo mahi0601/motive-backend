@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const Stripe = require('stripe');
 const config = require('../config/env');
 const prisma = require('../config/prisma');
@@ -45,7 +46,7 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
   const billing = await prisma.user.findUnique({ where: { id: user.id }, omit: { stripeCustomerId: false } });
 
   const client = getStripe();
-  const session = await client.checkout.sessions.create({
+  const params = {
     mode: 'subscription',
     ...(billing?.stripeCustomerId ? { customer: billing.stripeCustomerId } : { customer_email: user.email }),
     client_reference_id: user.id,
@@ -69,7 +70,15 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
     // Every later customer.subscription.* event carries this, which is how a
     // renewal, cancellation or failed payment finds its user.
     subscription_data: { metadata: { userId: user.id } },
-  });
+  };
+  // A double-click (or a retry after a timeout) must not create two checkout
+  // sessions. The key is a hash of the whole request plus a 10-minute window: the
+  // same request in that window gets the SAME session back from Stripe, while a
+  // changed request (a different currency, a newly attached customer) gets a new
+  // key, because Stripe rejects a reused key whose parameters differ.
+  const window = Math.floor(Date.now() / (10 * 60 * 1000));
+  const idempotencyKey = crypto.createHash('sha256').update(JSON.stringify([params, window])).digest('hex');
+  const session = await client.checkout.sessions.create(params, { idempotencyKey });
 
   return { url: session.url };
 };

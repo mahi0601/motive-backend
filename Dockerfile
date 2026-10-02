@@ -1,28 +1,43 @@
-FROM node:22-alpine
-
+# ── Stage 1: install production dependencies and generate the Prisma client ───
+# The prisma CLI is a regular dependency (the container applies migrations at
+# start), so `--omit=dev` still gets it. The schema must be present first,
+# because @prisma/client's postinstall runs `prisma generate`.
+FROM node:22-alpine AS deps
 WORKDIR /app
-
-# Prisma's postinstall (`prisma generate`) needs the schema and the `prisma`
-# CLI (a devDependency), so install with dev deps present and the schema
-# already copied, rather than the old `--only=production` + copy-after order.
 COPY package*.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm ci --omit=dev
 
-COPY . .
+# ── Stage 2: the runtime image ────────────────────────────────────────────────
+FROM node:22-alpine
+WORKDIR /app
 
-# Set *after* npm ci, not before — `npm ci` needs devDependencies present
-# (see the comment above) and NODE_ENV=production during install would
-# skip them. This is what error.middleware.js's stack-trace-in-response gate
-# (`config.isProd`, i.e. NODE_ENV === 'production' exactly) actually relies
-# on — Render's render.yaml already sets this correctly via envVars, but a
-# container run from this Dockerfile with no explicit override previously
-# leaked stack traces to clients.
+# NODE_ENV=production is what error.middleware.js's stack-trace gate
+# (`config.isProd`) relies on: a container run with no override must not leak
+# stack traces to clients.
 ENV NODE_ENV=production
+
+# Only what runs: production node_modules from stage 1, then the source. No test
+# tooling, no compilers, no devDependencies in the final image.
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node . .
+
+# The app writes local uploads here when R2 is not configured. Owned by the
+# unprivileged user, so the process never needs root to do its job.
+RUN mkdir -p public/uploads && chown -R node:node public
+
+# Run as the unprivileged `node` user that the base image provides (uid 1000),
+# not root: a bug in a dependency then cannot, for example, rewrite the image's
+# own files or bind privileged ports.
+USER node
 
 EXPOSE 8080
 
-# Applies pending migrations before the app starts — needed since this image
-# has no separate release/build step like Render's.
-CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]
+# Lets Docker and orchestrators see a wedged process. The app answers /api/health
+# with the database status.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-8080}/api/health" || exit 1
 
+# Applies pending migrations before the app starts: this image has no separate
+# release/build step like Render's.
+CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]

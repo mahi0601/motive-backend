@@ -86,6 +86,28 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npm test
 
+  # Builds the production image and checks the properties that matter, because a
+  # Dockerfile that merely builds can still run as root or ship test tooling. No
+  # database needed: this only inspects the image.
+  docker-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build
+        run: docker build -t clientglass-api:ci .
+      - name: Runs as an unprivileged user
+        run: |
+          uid=$(docker run --rm --entrypoint id clientglass-api:ci -u)
+          echo "container uid: $uid"
+          test "$uid" != "0"
+      - name: Contains production dependencies only, plus the Prisma CLI
+        run: |
+          docker run --rm --entrypoint sh clientglass-api:ci -c 'test -x node_modules/.bin/prisma && test ! -d node_modules/jest && test ! -d node_modules/supertest'
+      - name: Uploads directory is writable by that user
+        run: docker run --rm --entrypoint sh clientglass-api:ci -c 'touch public/uploads/.w && rm public/uploads/.w'
+      - name: Declares a health check
+        run: docker image inspect clientglass-api:ci --format '{{.Config.Healthcheck.Test}}' | grep -q api/health
+
   # Deploys only after every check above passed, and only for a push to master
   # (never for a PR). render.yaml sets `autoDeploy: false`, so this job is the
   # only thing that can ship — a red CI run can no longer reach production.
@@ -96,7 +118,7 @@ jobs:
   # never in the repo. `permissions: {}` — the job only calls curl and needs no
   # access to this repository's contents or the GitHub API.
   deploy:
-    needs: [secret-scan, build]
+    needs: [secret-scan, build, docker-image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions: {}

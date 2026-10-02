@@ -1,26 +1,34 @@
 const prisma = require('../config/prisma');
 const taskService = require('./task.service');
-const workspaceService = require('./workspace.service');
 
-// Everyone the requesting user could plausibly @mention: themself, plus
-// every member (and owner) of every workspace they belong to — the same set
-// the frontend's mention autocomplete draws from (see CommentSection.jsx).
-// Mirrors the client's own rule that workspace membership is what makes
-// someone mentionable, rather than trusting whatever id the client sends.
-async function getMentionableUserIds(userId) {
-  const workspaces = await workspaceService.listForUser(userId);
+// Everyone who can be @mentioned on a task: the commenter, and the owner and
+// members of THE TASK'S workspace. Not everyone the commenter shares some other
+// workspace with: otherwise a mention on a client-facing task could notify (and
+// confirm the existence of) people from an unrelated team. A task with no
+// workspace (legacy personal rows) allows only the commenter.
+async function getMentionableUserIds(userId, workspaceId) {
   const ids = new Set([userId]);
-  workspaces.forEach((ws) => {
+  if (!workspaceId) return ids;
+  const ws = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { ownerId: true, members: { select: { userId: true } } },
+  });
+  if (ws) {
     ids.add(ws.ownerId);
     ws.members.forEach((m) => ids.add(m.userId));
-  });
+  }
   return ids;
 }
 
-// Mentions are authored as @[Display Name](userId) — parsed back into a
-// styled chip client-side. Extracts the distinct mentioned user ids.
-const MENTION_RE = /@\[[^\]]+\]\(([^)]+)\)/g;
+// Mentions are authored as @[Display Name](userId), parsed back into a styled
+// chip client-side. Extracts the distinct mentioned user ids. Every part is
+// bounded (a display name is at most 100 characters and contains no "]" or
+// newline; an id is 1-64 URL-safe characters), so the match cannot backtrack
+// over a long hostile string: CodeQL flagged the unbounded version as
+// polynomial ReDoS on comment text of up to 5000 characters.
+const MENTION_RE = /@\[[^\]\n]{1,100}\]\(([A-Za-z0-9_-]{1,64})\)/g;
 const extractMentionedUserIds = (text) => [...new Set([...text.matchAll(MENTION_RE)].map((m) => m[1]))];
+exports._internals = { extractMentionedUserIds };
 
 // Returns `{ comment, notifications }` — the controller emits `notifications`
 // over sockets itself (matching block.service.js/block.controller.js's
@@ -37,7 +45,7 @@ exports.addComment = async (taskId, userId, text) => {
     include: { user: { select: { name: true } } },
   });
 
-  const mentionableIds = await getMentionableUserIds(userId);
+  const mentionableIds = await getMentionableUserIds(userId, task.workspaceId);
   const mentionedIds = extractMentionedUserIds(text).filter(
     (id) => id !== userId && mentionableIds.has(id)
   );
@@ -62,8 +70,12 @@ exports.addComment = async (taskId, userId, text) => {
 
 exports.getComments = async (taskId, userId) => {
   await taskService.assertAccess(taskId, userId, 'read');
+  // Oldest first, with a ceiling: a task with thousands of comments must not
+  // load them all in one request.
   return prisma.comment.findMany({
     where: { taskId },
+    orderBy: { createdAt: 'asc' },
+    take: 500,
     include: { user: { select: { name: true, email: true } } },
   });
 };
