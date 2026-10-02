@@ -12,6 +12,12 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, url });
 });
 
+// Studio -> Agency on the existing subscription (see payment.service.js#changePlan).
+exports.changePlan = asyncHandler(async (req, res) => {
+  const { tier } = await PaymentService.changePlan(req.user.id, req.body.plan);
+  res.status(200).json({ success: true, tier });
+});
+
 // Stripe's hosted Customer Portal — update card, view invoices, cancel.
 exports.createPortalSession = asyncHandler(async (req, res) => {
   const { url } = await PaymentService.createPortalSession(req.user.id);
