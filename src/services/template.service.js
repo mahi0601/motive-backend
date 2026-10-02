@@ -11,6 +11,7 @@ exports.list = async (userId) => {
   const custom = await prisma.template.findMany({
     where: { ownerId: userId },
     orderBy: { createdAt: 'desc' },
+    take: 200, // a ceiling, not a feature: nobody curates more than this by hand
   });
   return {
     builtIn: builtins.map(({ key, name, icon, description, category, accent, blocks }) => ({

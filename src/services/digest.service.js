@@ -23,11 +23,13 @@ exports.getDailyDigest = async (userId, { timezone = 'UTC', now = new Date() } =
     prisma.task.findMany({
       where: { userId, status: { not: 'done' }, dueDate: { lt: startOfToday } },
       orderBy: { dueDate: 'asc' },
+      take: 50, // the digest is a short summary; a ceiling keeps it that way
       select: PICK,
     }),
     prisma.task.findMany({
       where: { userId, status: { not: 'done' }, dueDate: { gte: startOfToday, lt: endOfToday } },
       orderBy: { priority: 'asc' }, // enum order isn't alphabetical-useful; re-sorted below anyway
+      take: 50,
       select: PICK,
     }),
   ]);
