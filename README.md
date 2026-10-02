@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="assets/logo-animated.svg" width="120" height="120" alt="Motive logo" />
+  <img src="assets/logo-animated.svg" width="120" height="120" alt="Clientglass logo" />
 
-  # Motive API
+  # Clientglass API
 
-  The backend for Motive — a Notion/Todoist-style productivity app.
+  The backend for Clientglass — a Notion/Todoist-style productivity app.
 
   [![CI](https://github.com/mahi0601/motive-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/mahi0601/motive-backend/actions/workflows/ci.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -23,7 +23,7 @@ Node.js + Express + Prisma, Postgres (Neon), JWT auth, Socket.io, Stripe.
 - One-time Stripe Pro upgrade, verified via webhook signature
 - Optional integrations — Cloudflare R2 storage, Sentry, Resend email, Logtail — each off by default
 
-The frontend lives in a sibling repo — [Motive](https://github.com/mahi0601/Motive).
+The frontend lives in a sibling repo — [Clientglass](https://github.com/mahi0601/Motive).
 
 ## Quick start
 
@@ -82,7 +82,7 @@ Set `ALLOW_REMOTE_TEST_DB=1` only if you deliberately want to run against a host
 3. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`, the secret key into `STRIPE_SECRET_KEY`.
 4. Dashboard → Settings → Payment methods: enable whichever methods you want to accept. Checkout then offers those that are valid for a recurring payment in the buyer's currency.
 5. Dashboard → Settings → Billing → **Customer portal**: turn it on (and allow cancelling subscriptions). The app's "Manage billing" button opens it; it fails until it's enabled.
-6. Motive Pro is a **monthly subscription**. Prices are inline — `PRO_UPGRADE_PRICE_USD_CENTS` / `PRO_UPGRADE_PRICE_INR_PAISE` are now **per-month** amounts (they used to be a one-time total, so review them if you carried values over); only `usd`/`inr` are accepted. Everyone who was Pro before subscriptions launched is marked `proLifetime` by the migration and stays Pro regardless of any subscription.
+6. Clientglass Pro is a **monthly subscription**. Prices are inline — `PRO_UPGRADE_PRICE_USD_CENTS` / `PRO_UPGRADE_PRICE_INR_PAISE` are now **per-month** amounts (they used to be a one-time total, so review them if you carried values over); only `usd`/`inr` are accepted. Everyone who was Pro before subscriptions launched is marked `proLifetime` by the migration and stays Pro regardless of any subscription.
 
 ### Google OAuth
 

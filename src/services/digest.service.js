@@ -7,7 +7,7 @@ const priorityRank = { High: 0, Medium: 1, Low: 2 };
 // Rules-based (not LLM-generated): a templated summary assembled from plain
 // SQL queries — overdue, due today, and a single "focus" suggestion. Cheap,
 // instant, and reliable for something this mechanical; an LLM-generated
-// version is a natural upgrade path (see Motive's Phase 2 roadmap) once
+// version is a natural upgrade path (see Clientglass's Phase 2 roadmap) once
 // there's a reason to spend on it.
 //
 // "Today" is the user's local day (their saved `timezone`, like Momentum), not

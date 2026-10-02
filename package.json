@@ -1,7 +1,7 @@
 {
     "name": "motive-backend",
     "version": "1.0.0",
-    "description": "Motive API — Node.js + Express + Postgres (Neon/Prisma)",
+    "description": "Clientglass API — Node.js + Express + Postgres (Neon/Prisma)",
     "main": "src/index.js",
     "engines": {
         "node": ">=22"

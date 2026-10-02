@@ -127,7 +127,7 @@ app.get('/api/health', async (_req, res) => {
     uptime: process.uptime(),
   });
 });
-app.get('/', (_req, res) => res.send('🚀 Motive API is up & running'));
+app.get('/', (_req, res) => res.send('🚀 Clientglass API is up & running'));
 
 // ── Routes & error handler ──────────────────────────────
 app.use('/api', routes);

@@ -64,7 +64,7 @@ const pct = (part, whole) => (whole > 0 ? ` (${Math.round((part / whole) * 100)}
 exports.formatFunnel = (f, days) => {
   const row = (label, n, of) => `  ${label.padEnd(34)}${String(n).padStart(5)}${of === undefined ? '' : pct(n, of)}`;
   return [
-    `Motive funnel, last ${days} days`,
+    `Clientglass funnel, last ${days} days`,
     '',
     row('Signed up', f.signups),
     row('Added a first task', f.activated, f.signups),

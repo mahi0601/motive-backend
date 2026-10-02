@@ -1,6 +1,6 @@
-// The invite email's header carries the Motive logo: a hosted PNG on the
+// The invite email's header carries the Clientglass logo: a hosted PNG on the
 // frontend's own origin (absolute URL — mail clients can't resolve a relative
-// one, and don't render SVG), with alt text so "Motive" still shows when a
+// one, and don't render SVG), with alt text so "Clientglass" still shows when a
 // client blocks images. The other thing pinned here is that user-supplied names
 // stay escaped now that the template has changed.
 const prisma = require('../src/config/prisma');
@@ -37,11 +37,11 @@ describe('invite email header', () => {
     return sendEmail.mock.calls[0][0].html;
   };
 
-  test('shows the logo image from the frontend origin, at half its 2× size, with "Motive" as alt text', async () => {
+  test('shows the logo image from the frontend origin, at half its 2× size, with "Clientglass" as alt text', async () => {
     const html = await inviteAndGetHtml();
     expect(html).toContain(`src="${config.frontendUrl}/brand/logo-email.png"`);
-    expect(html).toContain('alt="Motive"');
-    expect(html).toContain('width="123"');
+    expect(html).toContain('alt="Clientglass"');
+    expect(html).toContain('width="173"');
     expect(html).toContain('height="40"');
     // The alt text is styled white and bold so the fallback looks like the old text header.
     expect(html).toMatch(/<img[^>]*color:#FFFFFF[^>]*font-weight:700/);
@@ -53,9 +53,9 @@ describe('invite email header', () => {
     expect(html).toContain('linear-gradient(135deg,#0E4C5C,#1B7A8C)');
   });
 
-  test('the old text-only "Motive" header span is gone', async () => {
+  test('the old text-only "Clientglass" header span is gone', async () => {
     const html = await inviteAndGetHtml();
-    expect(html).not.toContain('<span style="color:#FFFFFF;font-size:18px;font-weight:700;">Motive</span>');
+    expect(html).not.toContain('<span style="color:#FFFFFF;font-size:18px;font-weight:700;">Clientglass</span>');
   });
 
   test('workspace and inviter names are still HTML-escaped after the template change', async () => {

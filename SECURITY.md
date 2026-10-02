@@ -10,7 +10,7 @@ We aim to acknowledge a report within 5 business days and to tell you what we pl
 
 ## Scope
 
-This repository is Motive's API (Express, Prisma, Postgres, Socket.io). The web app lives in the companion `Motive` repository; report issues in either there or here.
+This repository is Clientglass's API (Express, Prisma, Postgres, Socket.io). The web app lives in the companion `Motive` repository; report issues in either there or here.
 
 ## What we already do
 

@@ -2,7 +2,7 @@
 // destructured `verified_email` off the profile in a comment and never
 // actually checked it — an account-linking flow that trusts an *unverified*
 // Google email lets anyone who registers `victim@x.com` at Google without
-// owning it get silently linked to, and logged into, the existing Motive
+// owning it get silently linked to, and logged into, the existing Clientglass
 // account with that email.
 //
 // Mocks `global.fetch` (the only external dependency `loginWithGoogle` has)

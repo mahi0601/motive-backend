@@ -2,7 +2,7 @@ const prisma = require('../config/prisma');
 const { getZonedParts, getPeriodBounds, bucketKey } = require('../utils/timezone.util');
 
 const VALID_PERIODS = ['week', 'month', 'quarter'];
-// Motive Pro's gate: This week is free for everyone; a longer view (and the
+// Clientglass Pro's gate: This week is free for everyone; a longer view (and the
 // deeper insight history that comes with it — the same buildInsights() logic,
 // just running over a bigger window) is the paid perk. Enforced in
 // momentum.controller.js, which is the only place req.user.isPro is known —
