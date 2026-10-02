@@ -3,7 +3,7 @@
 
   # Clientglass API
 
-  The backend for Clientglass — a Notion/Todoist-style productivity app.
+  The backend for Clientglass — client-ready project delivery for small agencies: a task board your team runs, and a live status page your client opens without an account.
 
   [![CI](https://github.com/mahi0601/motive-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/mahi0601/motive-backend/actions/workflows/ci.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -20,7 +20,8 @@ Node.js + Express + Prisma, Postgres (Neon), JWT auth, Socket.io, Stripe.
 - Workspace-scoped multi-tenancy with a permission matrix enforced on every route
 - JWT access/refresh auth with rotation and revocation, plus optional Google OAuth
 - Realtime notifications over Socket.io
-- One-time Stripe Pro upgrade, verified via webhook signature
+- Public client status page per workspace: branding, milestone, client sign-off and responses, no client account
+- Stripe subscription billing, verified via webhook signature
 - Optional integrations — Cloudflare R2 storage, Sentry, Resend email, Logtail — each off by default
 
 The frontend lives in a sibling repo — [Clientglass](https://github.com/mahi0601/Motive).

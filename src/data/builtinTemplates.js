@@ -8,7 +8,7 @@
 
 const T = (type, text, extra = {}) => ({ type, content: { text, ...extra } });
 
-module.exports = [
+const templates = [
   {
     key: 'blank',
     name: 'Blank page',
@@ -352,3 +352,16 @@ module.exports = [
     ],
   },
 ];
+
+// Gallery order: client-delivery templates first (the product is for agencies
+// running client work), personal ones last. Array.prototype.sort is stable, so
+// templates keep their authored order within a category, and the gallery's
+// filter chips (built in first-seen order) follow the same ranking. Nothing is
+// removed: existing pages made from any template are unaffected.
+const CATEGORY_RANK = ['Agency', 'Work', 'General', 'Personal', 'Education'];
+const rank = (c) => {
+  const i = CATEGORY_RANK.indexOf(c);
+  return i === -1 ? CATEGORY_RANK.length : i;
+};
+
+module.exports = [...templates].sort((a, b) => rank(a.category) - rank(b.category));
