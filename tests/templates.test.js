@@ -38,6 +38,22 @@ describe('built-in templates', () => {
     expect(agency).toEqual(['client-onboarding', 'retainer-tracker', 'website-project', 'weekly-client-update']);
   });
 
+  test('the gallery leads with the Agency templates, and the personal ones come last', () => {
+    const cats = builtins.map((t) => t.category);
+    expect(cats.slice(0, 4)).toEqual(['Agency', 'Agency', 'Agency', 'Agency']);
+    // Categories appear as contiguous groups, so the gallery's filter chips
+    // (built in first-seen order) read Agency, Work, General, Personal, Education.
+    expect([...new Set(cats)]).toEqual(['Agency', 'Work', 'General', 'Personal', 'Education']);
+    expect(cats.lastIndexOf('Agency')).toBeLessThan(cats.indexOf('Work'));
+  });
+
+  test('reordering drops nothing: every template key is still there, in a stable order within its group', () => {
+    const keys = builtins.map((t) => t.key);
+    expect(keys).toHaveLength(14);
+    const work = builtins.filter((t) => t.category === 'Work').map((t) => t.key);
+    expect(work).toEqual(['meeting-notes', 'project-plan', 'product-spec']);
+  });
+
   describe('using an Agency template', () => {
     let user;
     beforeAll(async () => {
