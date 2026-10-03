@@ -62,6 +62,11 @@ exports.updateStatusPage = asyncHandler(async (req, res) => {
   res.json({ success: true, page });
 });
 
+exports.setMilestones = asyncHandler(async (req, res) => {
+  const milestones = await WorkspaceService.setMilestones(req.params.id, req.user.id, req.body.milestones);
+  res.json({ success: true, milestones });
+});
+
 exports.listFeedback = asyncHandler(async (req, res) => {
   const result = await FeedbackService.list(req.params.id, req.user.id, req.query);
   res.json({ success: true, ...result });

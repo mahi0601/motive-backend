@@ -100,10 +100,26 @@ const sendInviteEmail = async (invite, workspace, inviterName, rawToken) => {
 };
 
 // Returns the user's workspaces; creates a default one on first access.
+// The milestones every workspace payload carries, in page order.
+const MILESTONES_INCLUDE = { orderBy: { position: 'asc' }, select: { id: true, title: true, date: true } };
+
+// The original single milestone fields are no longer stored on the workspace (see
+// the Milestone model). A frontend that predates the list still reads
+// `milestoneTitle`/`milestoneDate`, so they are filled from the first milestone;
+// without this it would show a stale value.
+const withLegacyMilestone = (ws) => ({
+  ...ws,
+  milestoneTitle: ws.milestones?.[0]?.title ?? null,
+  milestoneDate: ws.milestones?.[0]?.date ?? null,
+});
+
 exports.listForUser = async (userId) => {
   let workspaces = await prisma.workspace.findMany({
     where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    include: { members: { include: { user: { select: { id: true, name: true, email: true } } } } },
+    include: {
+      members: { include: { user: { select: { id: true, name: true, email: true } } } },
+      milestones: MILESTONES_INCLUDE,
+    },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -114,11 +130,14 @@ exports.listForUser = async (userId) => {
         ownerId: userId,
         members: { create: [{ userId, role: 'owner' }] },
       },
-      include: { members: { include: { user: { select: { id: true, name: true, email: true } } } } },
+      include: {
+        members: { include: { user: { select: { id: true, name: true, email: true } } } },
+        milestones: MILESTONES_INCLUDE,
+      },
     });
     workspaces = [ws];
   }
-  return workspaces;
+  return workspaces.map(withLegacyMilestone);
 };
 
 exports.getDefault = async (userId) => {
@@ -541,23 +560,19 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const data = {
     statusHeadline: text(input.headline),
     statusSummary: text(input.summary),
-    milestoneTitle: text(input.milestoneTitle),
-    milestoneDate:
-      input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
     statusAccent: input.accent,
     statusHideBranding: input.hideBranding,
     statusAllowFeedback: input.allowFeedback,
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
 
-  // A new milestone name or date starts a clean slate for approvals: bump the
-  // version approvals are tied to. Saving the same values again does not.
-  if ('milestoneTitle' in data || 'milestoneDate' in data) {
-    const current = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { milestoneTitle: true, milestoneDate: true } });
-    const titleChanged = 'milestoneTitle' in data && data.milestoneTitle !== current.milestoneTitle;
-    const dateChanged = 'milestoneDate' in data && (data.milestoneDate?.getTime() ?? null) !== (current.milestoneDate?.getTime() ?? null);
-    if (titleChanged || dateChanged) data.milestoneVersion = { increment: 1 };
-  }
+  // The original single-milestone fields. Milestones live in their own table now,
+  // so these mean "the first milestone" (see applyFirstMilestone); they are never
+  // written to the workspace row.
+  const firstMilestone = {
+    title: text(input.milestoneTitle),
+    date: input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
+  };
 
   if (data.statusHideBranding === true) {
     const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
@@ -569,19 +584,94 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },
     data,
-    select: { statusHeadline: true, statusSummary: true, milestoneTitle: true, milestoneDate: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true },
+    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true },
   });
+  await applyFirstMilestone(workspaceId, firstMilestone);
+  const first = await prisma.milestone.findFirst({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { title: true, date: true } });
   // Which fields changed, never what they say.
-  await audit.record({ type: 'status_page_updated', actorId: requesterId, workspaceId, meta: { fields: Object.keys(data).join(',') } });
-  return ws;
+  const changed = [
+    ...Object.keys(data),
+    ...(firstMilestone.title !== undefined ? ['milestoneTitle'] : []),
+    ...(firstMilestone.date !== undefined ? ['milestoneDate'] : []),
+  ];
+  await audit.record({ type: 'status_page_updated', actorId: requesterId, workspaceId, meta: { fields: changed.join(',') } });
+  return { ...ws, milestoneTitle: first?.title ?? null, milestoneDate: first?.date ?? null };
+};
+
+const MAX_MILESTONES = 12;
+const sameDate = (a, b) => (a?.getTime() ?? null) === (b?.getTime() ?? null);
+
+// The old single-milestone behaviour on top of the milestone list: `title` and
+// `date` are undefined (leave alone), null (clear) or a value, and apply to the
+// FIRST milestone. A cleared title removes it; a title with none present creates
+// it; a changed title or date bumps its version, which resets its sign-off.
+const applyFirstMilestone = async (workspaceId, { title, date }) => {
+  if (title === undefined && date === undefined) return;
+  const first = await prisma.milestone.findFirst({ where: { workspaceId }, orderBy: { position: 'asc' } });
+  if (title === null) {
+    if (first) await prisma.milestone.delete({ where: { id: first.id } });
+    return;
+  }
+  if (!first) {
+    if (title) await prisma.milestone.create({ data: { workspaceId, title, date: date ?? null, position: 0 } });
+    return;
+  }
+  const nextTitle = title ?? first.title;
+  const nextDate = date === undefined ? first.date : date;
+  if (nextTitle !== first.title || !sameDate(nextDate, first.date)) {
+    await prisma.milestone.update({ where: { id: first.id }, data: { title: nextTitle, date: nextDate, version: { increment: 1 } } });
+  }
+};
+
+// Owner-only: replaces the whole ordered list. An item with an `id` keeps its row
+// (and its sign-off, unless its title or date changed, which bumps its version);
+// an item without one is new; any existing milestone not in the list is removed
+// (the sign-off history stays, with the title it had). Reordering changes only
+// positions, so no approval is affected. Ids are checked against THIS workspace.
+exports.setMilestones = async (workspaceId, requesterId, list) => {
+  await assertOwner(workspaceId, requesterId);
+  if (!Array.isArray(list) || list.length > MAX_MILESTONES) {
+    throw new AppError(`A status page can have up to ${MAX_MILESTONES} milestones.`, 422);
+  }
+  const existing = await prisma.milestone.findMany({ where: { workspaceId } });
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  const kept = new Set();
+  for (const item of list) {
+    if (item.id === undefined || item.id === null) continue;
+    if (!byId.has(item.id)) throw new AppError('One of those milestones is not on this page.', 422);
+    if (kept.has(item.id)) throw new AppError('A milestone appears twice.', 422);
+    kept.add(item.id);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.milestone.deleteMany({ where: { workspaceId, id: { notIn: [...kept] } } });
+    for (const [position, item] of list.entries()) {
+      const title = String(item.title).trim();
+      const date = item.date ? new Date(item.date) : null;
+      const current = item.id ? byId.get(item.id) : null;
+      if (!current) {
+        await tx.milestone.create({ data: { workspaceId, title, date, position } });
+      } else {
+        const changed = title !== current.title || !sameDate(date, current.date);
+        await tx.milestone.update({
+          where: { id: current.id },
+          data: { title, date, position, ...(changed ? { version: { increment: 1 } } : {}) },
+        });
+      }
+    }
+  });
+  await audit.record({ type: 'milestones_updated', actorId: requesterId, workspaceId, meta: { count: list.length } });
+  return prisma.milestone.findMany({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { id: true, title: true, date: true } });
 };
 
 const STATUS_PAGE_TASK_LIMIT = 200;
 
 // Everything the public page may see, and nothing else: an allowlist built
 // field-by-field (like safeInviteFields), never a spread of a task row. No
-// ids, no assignees or other people, no descriptions, no comments or files —
-// just a title, a status and dates. The owner is warned in the UI that task
+// ids (the one exception is a milestone's id, which a client needs to say which
+// milestone they approve and which is checked against the workspace when used), no
+// assignees or other people, no descriptions, no comments or files — just a title,
+// a status and dates. The owner is warned in the UI that task
 // titles become public.
 exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
@@ -593,12 +683,10 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
       icon: true,
       statusHeadline: true,
       statusSummary: true,
-      milestoneTitle: true,
-      milestoneDate: true,
       statusAccent: true,
       statusHideBranding: true,
       statusAllowFeedback: true,
-      milestoneVersion: true,
+      milestones: { orderBy: { position: 'asc' }, take: MAX_MILESTONES, select: { id: true, title: true, date: true, version: true } },
       owner: { select: { isPro: true } },
     },
   });
@@ -609,18 +697,24 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
   // Fire and forget: never slows the page.
   if (!preview) analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
 
-  // Approved = the latest approve-or-request-changes on THIS version of the
-  // milestone was an approval. Only the date is exposed: the sender's typed name
-  // is unverified text and this page is public.
-  let approvedAt = null;
-  if (ws.milestoneTitle) {
-    const latest = await prisma.clientFeedback.findFirst({
-      where: { workspaceId: ws.id, milestoneVersion: ws.milestoneVersion, kind: { in: ['approve', 'changes'] } },
-      orderBy: { createdAt: 'desc' },
-      select: { kind: true, createdAt: true },
-    });
-    if (latest?.kind === 'approve') approvedAt = latest.createdAt;
-  }
+  // A milestone is approved when the latest approve-or-request-changes for its
+  // CURRENT version was an approval. Only the date is exposed: the sender's typed
+  // name is unverified text and this page is public. One query for all of them: the
+  // newest matching row per milestone.
+  const latest = ws.milestones.length
+    ? await prisma.clientFeedback.findMany({
+        where: {
+          workspaceId: ws.id,
+          kind: { in: ['approve', 'changes'] },
+          OR: ws.milestones.map((m) => ({ milestoneId: m.id, milestoneVersion: m.version })),
+        },
+        distinct: ['milestoneId'],
+        orderBy: [{ milestoneId: 'asc' }, { createdAt: 'desc' }],
+        select: { milestoneId: true, kind: true, createdAt: true },
+      })
+    : [];
+  const approvedAtOf = new Map(latest.filter((f) => f.kind === 'approve').map((f) => [f.milestoneId, f.createdAt]));
+  const milestones = ws.milestones.map((m) => ({ id: m.id, title: m.title, date: m.date, approvedAt: approvedAtOf.get(m.id) ?? null }));
 
   const [counts, tasks] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
@@ -643,7 +737,9 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
     page: {
       headline: ws.statusHeadline,
       summary: ws.statusSummary,
-      milestone: ws.milestoneTitle ? { title: ws.milestoneTitle, date: ws.milestoneDate, approvedAt } : null,
+      milestones,
+      // The first one, for a frontend that predates the list.
+      milestone: milestones[0] ?? null,
       accent: ws.statusAccent,
       // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
       hideBranding: ws.statusHideBranding && ws.owner.isPro,

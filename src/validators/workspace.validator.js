@@ -35,7 +35,7 @@ const optionalText = (field, max) =>
 exports.statusPageRules = [
   optionalText('headline', 120),
   optionalText('summary', 600),
-  optionalText('milestoneTitle', 100),
+  optionalText('milestoneTitle', 100), // the first milestone; see updateStatusPage
   body('milestoneDate')
     .optional({ nullable: true })
     .custom((v) => v === '' || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v))))
@@ -43,4 +43,24 @@ exports.statusPageRules = [
   body('accent').optional().isIn(ACCENTS).withMessage(`accent must be one of: ${ACCENTS.join(', ')}`),
   body('hideBranding').optional().isBoolean({ strict: true }).withMessage('hideBranding must be true or false'),
   body('allowFeedback').optional().isBoolean({ strict: true }).withMessage('allowFeedback must be true or false'),
+];
+
+// The whole ordered list of milestones. Plain text, bounded; an item with an id
+// keeps its row. Which ids are acceptable is checked against the workspace by the
+// service, not here.
+exports.milestonesRules = [
+  body('milestones').isArray({ max: 12 }).withMessage('milestones must be a list of up to 12'),
+  body('milestones.*').isObject().withMessage('each milestone must be an object'),
+  body('milestones.*.id').optional({ nullable: true }).isString().withMessage('a milestone id must be text'),
+  body('milestones.*.title')
+    .isString()
+    .withMessage('each milestone needs a title')
+    .bail()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('a milestone title must be 1–100 characters'),
+  body('milestones.*.date')
+    .optional({ nullable: true })
+    .custom((v) => v === '' || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v))))
+    .withMessage('a milestone date must be a date (YYYY-MM-DD)'),
 ];

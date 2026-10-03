@@ -53,7 +53,9 @@ describe('status page details', () => {
     expect(view.body.status.page).toEqual({
       headline: 'Acme website redesign',
       summary: 'Phase 2 of 3: build and review.',
-      milestone: { title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z', approvedAt: null },
+      // The first milestone (`milestone`, for a frontend that predates the list) and the list.
+      milestone: { id: expect.any(String), title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z', approvedAt: null },
+      milestones: [{ id: expect.any(String), title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z', approvedAt: null }],
       accent: 'violet',
       hideBranding: false,
       allowFeedback: false,
@@ -67,7 +69,7 @@ describe('status page details', () => {
     try {
       const fresh = await makeWorkspaceWithMembers(other);
       const view = await publicView(fresh, other);
-      expect(view.body.status.page).toEqual({ headline: null, summary: null, milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false });
+      expect(view.body.status.page).toEqual({ headline: null, summary: null, milestones: [], milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false });
     } finally {
       await cleanupUsers(other);
     }
