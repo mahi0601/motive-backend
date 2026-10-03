@@ -46,8 +46,8 @@ const sendAuth = (res, status, { user, accessToken, refreshToken }) => {
 const sessionContext = (req) => ({ userAgent: req.get('user-agent') });
 
 exports.register = asyncHandler(async (req, res) => {
-  const { name, email, password } = req.body;
-  const data = await AuthService.register({ name, email, password }, sessionContext(req));
+  const { name, email, password, acceptTerms } = req.body;
+  const data = await AuthService.register({ name, email, password, acceptTerms }, sessionContext(req));
   sendAuth(res, 201, data);
 });
 

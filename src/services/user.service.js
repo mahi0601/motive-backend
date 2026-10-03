@@ -76,6 +76,8 @@ exports.exportData = async (userId) => {
       avatar: user.avatar,
       timezone: user.timezone,
       createdAt: user.createdAt,
+      termsAcceptedAt: user.termsAcceptedAt,
+      termsVersion: user.termsVersion,
       signInMethods: [user.password ? 'password' : null, user.googleId ? 'google' : null].filter(Boolean),
       plan: { tier: effectivePlan(user), isPro: user.isPro, lifetime: user.proLifetime, subscriptionStatus: user.subscriptionStatus, periodEnd: user.proPeriodEnd },
     },

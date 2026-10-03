@@ -8,6 +8,10 @@ exports.registerRules = [
     .withMessage('Password must be at least 8 characters')
     .matches(/\d/)
     .withMessage('Password must contain a number'),
+  // A real boolean yes, not the string "true" or a 1: this is the consent record.
+  body('acceptTerms')
+    .custom((v) => v === true)
+    .withMessage('Please confirm you are 16 or older and agree to the Terms and Privacy Policy'),
 ];
 
 exports.loginRules = [
