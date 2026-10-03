@@ -11,7 +11,19 @@ const config = require('../config/env');
 const logger = require('../config/logger');
 const { truncateIp } = require('./audit.service');
 
-const EVENTS = ['signup', 'first_task_created', 'status_link_created', 'status_page_viewed', 'feedback_received', 'upgraded'];
+const EVENTS = [
+  'signup',
+  'first_task_created',
+  'status_link_created',
+  'status_page_viewed',
+  'feedback_received',
+  'upgraded',
+  // Someone landed on the marketing page from the "Powered by" footer of a
+  // status page: the growth loop, counted by visitor hash only.
+  'landing_from_status',
+];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 exports.track = async (name, { userId = null, workspaceId = null, visitor = null } = {}) => {
   if (!EVENTS.includes(name)) {
@@ -56,6 +68,15 @@ exports.funnel = async ({ since, scope } = {}) => {
     viewers: viewerRows.length,
     feedbackReceived: await distinct('feedback_received', 'workspaceId', w),
     upgraded: await distinct('upgraded', 'userId', u),
+    // The north-star number: client pages someone actually opened in the last 7
+    // days, whatever window the rest of the funnel is read over. Owner previews
+    // are never recorded (see getStatusByToken), so this is clients, not owners.
+    activePages7d: await distinct('status_page_viewed', 'workspaceId', {
+      ...w,
+      createdAt: { gte: new Date(Date.now() - 7 * DAY_MS) },
+    }),
+    // Landing events carry no user or workspace, only the daily visitor hash.
+    landingVisitors: await distinct('landing_from_status', 'visitor', base),
   };
 };
 
@@ -70,11 +91,15 @@ exports.formatFunnel = (f, days) => {
     row('Added a first task', f.activated, f.signups),
     row('Created a client status link', f.linksCreated, f.activated),
     row('Link opened (workspaces)', f.linksViewed, f.linksCreated),
-    row('  unique viewers (incl. owner)', f.viewers),
+    row('  unique viewers', f.viewers),
     row('A client responded (workspaces)', f.feedbackReceived, f.linksViewed),
-    row('Upgraded to Pro', f.upgraded, f.signups),
+    row('Upgraded to a paid plan', f.upgraded, f.signups),
+    '',
+    row('Active client pages, last 7 days', f.activePages7d),
+    row('Visitors from a status page footer', f.landingVisitors),
     '',
     'Notes: stages count distinct people or workspaces, not events. Percentages are of the stage above',
-    '(upgrades: of signups). "Link opened" includes the owner previewing their own link.',
+    '(upgrades: of signups). An owner previewing their link from Settings is not counted as a view;',
+    'an owner who opens the plain link in a browser still is. "Active client pages" ignores the window above.',
   ].join('\n');
 };
