@@ -62,6 +62,11 @@ exports.updateStatusPage = asyncHandler(async (req, res) => {
   res.json({ success: true, page });
 });
 
+exports.getEngagement = asyncHandler(async (req, res) => {
+  const engagement = await WorkspaceService.getEngagement(req.params.id, req.user.id);
+  res.json({ success: true, ...engagement });
+});
+
 exports.setMilestones = asyncHandler(async (req, res) => {
   const milestones = await WorkspaceService.setMilestones(req.params.id, req.user.id, req.body.milestones);
   res.json({ success: true, milestones });
