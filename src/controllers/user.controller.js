@@ -8,6 +8,11 @@ exports.getUserProfile = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, user });
 });
 
+exports.acceptTerms = asyncHandler(async (req, res) => {
+  const user = await UserService.acceptTerms(req.user.id);
+  res.status(200).json({ success: true, user });
+});
+
 exports.updateUserProfile = asyncHandler(async (req, res) => {
   const user = await UserService.updateProfile(req.user.id, req.body);
   res.status(200).json({ success: true, user });
