@@ -159,7 +159,7 @@ describe('POST /api/workspaces/:id/duplicate', () => {
     test('an ordinary link in a block is kept', async () => {
       const id = copyOf(await make());
       const root = (await pagesOf(id)).find((p) => p.title === 'Project brief');
-      expect(root.blocks.some((b) => JSON.stringify(b.content).includes('https://example.org/guide'))).toBe(true);
+      expect(root.blocks.some((b) => b.content?.html === 'Read <a href="https://example.org/guide">our guide</a>')).toBe(true);
     });
 
     test('the status page wording comes across by default, but not the branding or response switches', async () => {
