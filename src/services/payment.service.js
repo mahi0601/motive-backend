@@ -5,6 +5,7 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
+const { PAID_PLANS, PLAN_NAMES } = require('../utils/plans');
 
 // Lazily constructed — throws only when a payment route is actually hit without
 // keys configured, instead of crashing the whole app at boot.
@@ -22,21 +23,23 @@ const getStripe = () => {
 // the next customer.subscription.updated/deleted event turns into isPro=false.
 const ACTIVE_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'];
 
-// Clientglass Pro is a monthly subscription — Stripe Checkout in `subscription` mode.
-// `currency` picks which price/currency the buyer pays in. No payment-method
-// list is passed: Checkout then shows whatever is enabled in the Dashboard AND
-// valid for a recurring payment in that currency (cards and wallets in general;
-// recurring UPI depends on the account and the buyer's bank, so it isn't
-// promised anywhere in the UI).
+// Clientglass is a monthly subscription in two paid plans (Studio, Agency) —
+// Stripe Checkout in `subscription` mode. `currency` picks which price/currency
+// the buyer pays in. No payment-method list is passed: Checkout then shows
+// whatever is enabled in the Dashboard AND valid for a recurring payment in that
+// currency (cards and wallets in general; recurring UPI depends on the account
+// and the buyer's bank, so it isn't promised anywhere in the UI).
 //
 // The price is defined inline (`price_data`) from config rather than a Stripe
 // Price id, so changing it is an environment-variable edit, not a dashboard
-// object to keep in sync. NOTE the PRO_UPGRADE_PRICE_* values are now
-// per-MONTH amounts (they used to be a one-time total).
-exports.createCheckoutSession = async (user, currency = 'usd') => {
+// object to keep in sync. The chosen plan rides along in the metadata of both
+// the session and the subscription, which is how the webhook knows what was
+// bought. With no plan given, the entry paid tier (Studio) is used.
+exports.createCheckoutSession = async (user, currency = 'usd', plan = 'studio') => {
   if (user.isPro) throw AppError.badRequest('Already upgraded to Pro');
 
-  const pricing = config.stripe.proPricing[currency];
+  if (!PAID_PLANS.includes(plan)) throw AppError.badRequest(`Unsupported plan: ${plan}`);
+  const pricing = config.stripe.plans[plan][currency];
   if (!pricing) throw AppError.badRequest(`Unsupported currency: ${currency}`);
 
   // A returning subscriber (cancelled, now re-subscribing) keeps their Stripe
@@ -54,7 +57,7 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
       {
         price_data: {
           currency,
-          product_data: { name: 'Clientglass Pro — monthly' },
+          product_data: { name: `Clientglass ${PLAN_NAMES[plan]} — monthly` },
           unit_amount: pricing.amount,
           recurring: { interval: 'month' },
         },
@@ -66,10 +69,10 @@ exports.createCheckoutSession = async (user, currency = 'usd') => {
     // reconcileSession() as a fallback if the webhook is ever delayed/dropped.
     success_url: `${config.frontendUrl}/settings?upgrade=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${config.frontendUrl}/settings?upgrade=cancelled`,
-    metadata: { userId: user.id },
+    metadata: { userId: user.id, plan },
     // Every later customer.subscription.* event carries this, which is how a
     // renewal, cancellation or failed payment finds its user.
-    subscription_data: { metadata: { userId: user.id } },
+    subscription_data: { metadata: { userId: user.id, plan } },
   };
   // A double-click (or a retry after a timeout) must not create two checkout
   // sessions. The key is a hash of the whole request plus a 10-minute window: the
@@ -126,6 +129,12 @@ const periodEndOf = (subscription) => {
   return seconds ? new Date(seconds * 1000) : null;
 };
 
+// The plan a subscription was bought as. A subscription with no recognised plan
+// on it (one created before tiers existed, on the old flat price) is Agency, so
+// existing subscribers keep every feature.
+const planOf = (subscription) =>
+  PAID_PLANS.includes(subscription.metadata?.plan) ? subscription.metadata.plan : 'agency';
+
 const asId = (value) => (typeof value === 'string' ? value : value?.id);
 
 // Grants Pro from a Checkout Session that has been paid. Shared by the webhook
@@ -155,11 +164,11 @@ const applyPaidCheckoutSession = async (session, userId) => {
     await applySubscription(subscription, 'checkout', userId);
   } else {
     const base = { isPro: true, ...(customerId ? { stripeCustomerId: customerId } : {}) };
-    await prisma.user.updateMany({ where: { id: userId }, data: { ...base, proLifetime: true } });
+    await prisma.user.updateMany({ where: { id: userId }, data: { ...base, proLifetime: true, plan: 'agency' } });
   }
 };
 
-// Keeps isPro, status and period end in step with the subscription's real
+// Keeps isPro, plan, status and period end in step with the subscription's real
 // state. `isPro` is recomputed from proLifetime, so a grandfathered user
 // whose (accidental) subscription ends stays Pro.
 const applySubscription = async (subscription, eventType, knownUserId) => {
@@ -182,7 +191,8 @@ const applySubscription = async (subscription, eventType, knownUserId) => {
       subscriptionStatus: status,
       proPeriodEnd: periodEndOf(subscription),
       subscriptionCancelAtPeriodEnd: !ended && !!subscription.cancel_at_period_end,
-      isPro: user.proLifetime || (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status)),
+      isPro: nextIsPro,
+      plan: user.proLifetime ? 'agency' : nextIsPro ? planOf(subscription) : 'free',
     },
   });
 };

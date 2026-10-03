@@ -72,9 +72,19 @@ const config = {
     // smallest currency unit. Which payment methods actually render per currency
     // (cards, Google Pay, Apple Pay, UPI/PhonePe, ...) is a Stripe Dashboard +
     // account-country setting, not something this app controls.
-    proPricing: {
-      usd: { amount: parseInt(process.env.PRO_UPGRADE_PRICE_USD_CENTS, 10) || 999, label: '$9.99' },
-      inr: { amount: parseInt(process.env.PRO_UPGRADE_PRICE_INR_PAISE, 10) || 79900, label: '₹799' },
+    // Monthly prices per paid plan and currency, in the currency's smallest unit.
+    // These defaults are PLACEHOLDERS until the numbers are checked with real
+    // buyers; change them per environment. Keep the frontend's config/plans.js
+    // (what the pricing page displays) in step with whatever is charged here.
+    plans: {
+      studio: {
+        usd: { amount: parseInt(process.env.STUDIO_PRICE_USD_CENTS, 10) || 1900, label: '$19' },
+        inr: { amount: parseInt(process.env.STUDIO_PRICE_INR_PAISE, 10) || 99900, label: '₹999' },
+      },
+      agency: {
+        usd: { amount: parseInt(process.env.AGENCY_PRICE_USD_CENTS, 10) || 4900, label: '$49' },
+        inr: { amount: parseInt(process.env.AGENCY_PRICE_INR_PAISE, 10) || 249900, label: '₹2,499' },
+      },
     },
   },
   resend: {

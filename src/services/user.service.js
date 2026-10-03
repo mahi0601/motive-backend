@@ -5,6 +5,7 @@ const paymentService = require('./payment.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
 const audit = require('./audit.service');
+const { effectivePlan } = require('../utils/plans');
 
 // `hasPassword` tells the client which confirmation the delete-account flow
 // needs (password vs. typing the account email — see deleteAccount). Derived
@@ -13,7 +14,9 @@ exports.getProfile = async (userId) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { password: false } });
   if (!user) return null;
   const { password, ...safe } = user;
-  return { ...safe, hasPassword: !!password };
+  // `tier` is what the account is entitled to right now (see utils/plans.js);
+  // the raw `plan` column is only a record of the last purchase.
+  return { ...safe, hasPassword: !!password, tier: effectivePlan(safe) };
 };
 
 exports.updateProfile = async (userId, data) => {
@@ -69,7 +72,7 @@ exports.exportData = async (userId) => {
       timezone: user.timezone,
       createdAt: user.createdAt,
       signInMethods: [user.password ? 'password' : null, user.googleId ? 'google' : null].filter(Boolean),
-      plan: { isPro: user.isPro, lifetime: user.proLifetime, subscriptionStatus: user.subscriptionStatus, periodEnd: user.proPeriodEnd },
+      plan: { tier: effectivePlan(user), isPro: user.isPro, lifetime: user.proLifetime, subscriptionStatus: user.subscriptionStatus, periodEnd: user.proPeriodEnd },
     },
     workspaces: workspaces.map((m) => ({ ...m.workspace, role: m.workspace.ownerId === userId ? 'owner' : m.role })),
     tasks,

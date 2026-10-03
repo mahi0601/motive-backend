@@ -151,9 +151,10 @@ describe('payment.service', () => {
       expect(args.mode).toBe('subscription');
       expect(args.line_items[0].price_data.recurring).toEqual({ interval: 'month' });
       expect(args.line_items[0].price_data.currency).toBe('usd');
-      expect(args.metadata).toEqual({ userId: user.id });
+      // The plan bought rides along (Studio when none is asked for).
+      expect(args.metadata).toEqual({ userId: user.id, plan: 'studio' });
       // Later customer.subscription.* events find their user through this.
-      expect(args.subscription_data.metadata).toEqual({ userId: user.id });
+      expect(args.subscription_data.metadata).toEqual({ userId: user.id, plan: 'studio' });
       expect(args.client_reference_id).toBe(user.id);
       expect(args.customer_email).toBe(user.email);
       expect(args).not.toHaveProperty('customer');

@@ -45,11 +45,16 @@ services:
       # (Developers → Webhooks → add endpoint https://<this-service>/api/payments/webhook).
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      # Per-MONTH amounts (Clientglass Pro is a subscription now).
-      - key: PRO_UPGRADE_PRICE_USD_CENTS
-        value: "999"
-      - key: PRO_UPGRADE_PRICE_INR_PAISE
-        value: "79900"
+      # Per-MONTH amounts for each paid plan (Studio, Agency). PLACEHOLDERS until
+      # checked with real buyers; keep the frontend's src/config/plans.js in step.
+      - key: STUDIO_PRICE_USD_CENTS
+        value: "1900"
+      - key: STUDIO_PRICE_INR_PAISE
+        value: "99900"
+      - key: AGENCY_PRICE_USD_CENTS
+        value: "4900"
+      - key: AGENCY_PRICE_INR_PAISE
+        value: "249900"
       # Password reset email — get a key from https://resend.com/api-keys.
       # Without it, reset emails just no-op with a console warning.
       - key: RESEND_API_KEY
