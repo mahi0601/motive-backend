@@ -103,9 +103,13 @@ app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders
 
 // Strict brute-force limit on credential endpoints only (not /refresh, which
 // the client calls routinely on reload / token expiry).
+// CREDENTIAL_RATE_MAX can raise it (a browser test suite signs in about that many
+// times from one address). Only a positive number counts: zero, negative or text
+// keeps 20, so a bad value cannot switch the protection off.
+const credentialMax = Number.parseInt(process.env.CREDENTIAL_RATE_MAX, 10);
 const credentialLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: credentialMax > 0 ? credentialMax : 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts, try again later.' },
