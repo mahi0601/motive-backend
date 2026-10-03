@@ -38,7 +38,13 @@ exports.submit = async (rawToken, input = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
-    select: { id: true, ownerId: true, name: true, milestoneTitle: true, milestoneVersion: true, statusAllowFeedback: true },
+    select: {
+      id: true,
+      ownerId: true,
+      name: true,
+      statusAllowFeedback: true,
+      milestones: { orderBy: { position: 'asc' }, take: 12, select: { id: true, title: true, version: true } },
+    },
   });
   if (!ws || !ws.statusAllowFeedback) throw notAvailable();
 
@@ -54,13 +60,31 @@ exports.submit = async (rawToken, input = {}) => {
   if (message === null || message.length > MAX_MESSAGE) throw new AppError(`Messages can be up to ${MAX_MESSAGE} characters.`, 422);
   if (kind !== 'approve' && !message) throw new AppError('Please write a message.', 422);
 
+  // Which milestone this is about. With none chosen it is the first one, as it was
+  // when a page had only one. A chosen id must be one of THIS page's milestones
+  // (an id from another workspace, or one just removed, is refused, never stored).
+  const chosen = input.milestoneId;
+  if (chosen !== undefined && chosen !== null && (typeof chosen !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(chosen))) {
+    throw new AppError('Choose a milestone from this page.', 422);
+  }
+  const target = chosen ? ws.milestones.find((m) => m.id === chosen) : ws.milestones[0];
+  if (chosen && !target) throw new AppError('That milestone is no longer on this page. Please reload.', 422);
+
   const today = await prisma.clientFeedback.count({
     where: { workspaceId: ws.id, createdAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
   });
   if (today >= DAILY_CAP) throw new AppError('This page cannot take more feedback right now. Please try again tomorrow.', 429);
 
   const row = await prisma.clientFeedback.create({
-    data: { workspaceId: ws.id, kind, authorName: name, message, milestoneTitle: ws.milestoneTitle, milestoneVersion: ws.milestoneVersion },
+    data: {
+      workspaceId: ws.id,
+      kind,
+      authorName: name,
+      message,
+      milestoneId: target?.id ?? null,
+      milestoneTitle: target?.title ?? null,
+      milestoneVersion: target?.version ?? 0,
+    },
   });
 
   // Tell the owner. The preview is short and is only ever shown as text.

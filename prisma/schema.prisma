@@ -154,11 +154,37 @@ model Workspace {
   // tied to the version it was given for, so changing the milestone starts a
   // clean slate (and reusing an old name later cannot revive an old approval).
   milestoneVersion   Int      @default(0)
+  // milestoneTitle, milestoneDate and milestoneVersion above are the ORIGINAL single
+  // milestone. They are no longer read or written: the Milestone table below is the
+  // source of truth (a migration moved each one across). They are kept, unused, so
+  // the migration is additive; a later one can drop them.
+  milestones         Milestone[]
   feedback           ClientFeedback[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([ownerId])
+}
+
+// One milestone on a workspace's public status page, in `position` order (the
+// first is the "next" one). Each has its own sign-off: `version` is bumped when its
+// title or date changes, and a client approval counts only for the version it was
+// given for, so editing a milestone starts a clean slate for it alone and reusing
+// an old title cannot revive an old approval. Ids are exposed on the public page
+// (a client says WHICH milestone they approve) and are always checked against the
+// workspace on write.
+model Milestone {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title       String
+  date        DateTime?
+  position    Int
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now())
+  feedback    ClientFeedback[]
+
+  @@index([workspaceId, position])
 }
 
 // Something a client sent from the public status page (see feedback.service.js).
@@ -174,7 +200,11 @@ model ClientFeedback {
   authorName     String
   message        String    @default("")
   milestoneTitle String?
-  // Which version of the milestone this was about (see Workspace.milestoneVersion).
+  // Which milestone, and which version of it, this was about (see Milestone). The id
+  // goes null if the owner later removes the milestone; the title above is the
+  // snapshot that keeps the history readable.
+  milestoneId    String?
+  milestone      Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
   milestoneVersion Int     @default(0)
   readAt         DateTime?
   createdAt      DateTime  @default(now())

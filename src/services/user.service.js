@@ -44,7 +44,12 @@ exports.exportData = async (userId) => {
   const [workspaces, tasks, pages, comments, files, notifications, activity, templates, clientFeedback] = await Promise.all([
     prisma.workspaceMember.findMany({
       where: { userId },
-      select: { role: true, workspace: { select: { id: true, name: true, icon: true, ownerId: true } } },
+      select: {
+        role: true,
+        workspace: {
+          select: { id: true, name: true, icon: true, ownerId: true, milestones: { orderBy: { position: 'asc' }, select: { title: true, date: true } } },
+        },
+      },
     }),
     prisma.task.findMany({ where: { userId }, include: { subtasks: true }, orderBy: { createdAt: 'asc' } }),
     prisma.page.findMany({ where: { ownerId: userId }, include: { blocks: { orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'asc' } }),
@@ -74,7 +79,12 @@ exports.exportData = async (userId) => {
       signInMethods: [user.password ? 'password' : null, user.googleId ? 'google' : null].filter(Boolean),
       plan: { tier: effectivePlan(user), isPro: user.isPro, lifetime: user.proLifetime, subscriptionStatus: user.subscriptionStatus, periodEnd: user.proPeriodEnd },
     },
-    workspaces: workspaces.map((m) => ({ ...m.workspace, role: m.workspace.ownerId === userId ? 'owner' : m.role })),
+    // Milestones belong to whoever owns the page, so they are exported only for
+    // workspaces this person owns.
+    workspaces: workspaces.map(({ role, workspace: { milestones, ...ws } }) => {
+      const owned = ws.ownerId === userId;
+      return { ...ws, role: owned ? 'owner' : role, ...(owned ? { milestones } : {}) };
+    }),
     tasks,
     pages,
     comments,
