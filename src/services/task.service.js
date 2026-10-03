@@ -4,6 +4,7 @@ const activityLog = require('./activityLog.service');
 const workspaceService = require('./workspace.service');
 const storageService = require('./storage.service');
 const analytics = require('./analytics.service');
+const audit = require('./audit.service');
 const { escapeLike } = require('../utils/like');
 
 // Paginated, indexed read — scales to large task counts per user.
@@ -212,6 +213,72 @@ exports.create = async (data, userId) => {
   activityLog.log('created', userId, { taskId: task.id, description: `Created "${task.title}"` });
   if (isFirstTask) await analytics.track('first_task_created', { userId, workspaceId });
   return task;
+};
+
+// Removes control characters (a NUL would be rejected by the database as a 500),
+// keeping tab, newline and carriage return.
+const isControl = (ch) => {
+  const code = ch.charCodeAt(0);
+  return (code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127;
+};
+const cleanText = (v) => [...String(v)].filter((ch) => !isControl(ch)).join('');
+
+// Bulk import (the frontend parses a CSV). All rows are created in one transaction,
+// into the caller's own workspace or one they may write to, owned by and assigned to
+// the caller. Only the fields named below are read from a row, whatever else it holds.
+//
+// A task imported as done needs a completion date or the Momentum numbers lie: with
+// none it reads as open in the "as of last period" tiles, and "now" would count a
+// whole backlog as shipped today and drag the on-time rate down. So it gets the date
+// in the file if there is one, else its due date, never later than now, else none.
+exports.importMany = async (rows, userId, workspaceId) => {
+  if (workspaceId) {
+    if (!(await workspaceService.canAccess(workspaceId, userId, 'write'))) {
+      throw AppError.forbidden('You do not have write access to that workspace');
+    }
+  } else {
+    workspaceId = (await workspaceService.getDefault(userId)).id;
+  }
+
+  const now = new Date();
+  const notLater = (d) => (d && d.getTime() > now.getTime() ? now : d);
+  const data = rows.map((row, i) => {
+    const title = cleanText(row.title).trim();
+    if (!title) throw new AppError(`Row ${i + 1}: a title is required.`, 422);
+    const status = row.status || 'todo';
+    const dueDate = row.dueDate ? new Date(row.dueDate) : null;
+    const completedAt = row.completedAt ? new Date(row.completedAt) : null;
+    const tags = (row.tags || []).map((t) => cleanText(t).trim()).filter(Boolean);
+    return {
+      title,
+      ...(row.description ? { description: cleanText(row.description) } : {}),
+      status,
+      ...(row.priority ? { priority: row.priority } : {}),
+      ...(row.category ? { category: cleanText(row.category).trim() || undefined } : {}),
+      dueDate,
+      completedAt: status === 'done' ? notLater(completedAt) ?? notLater(dueDate) ?? null : null,
+      tags,
+      userId,
+      workspaceId,
+      assigneeId: userId,
+    };
+  });
+
+  let isFirstTask = false;
+  await prisma.$transaction(
+    async (tx) => {
+      const count = await tx.task.count({ where: { userId } });
+      isFirstTask = count === 0;
+      await tx.task.createMany({ data: data.map((d, i) => ({ ...d, position: count + i })) });
+    },
+    { isolationLevel: 'Serializable' }
+  );
+
+  // One activity entry, not one per task.
+  activityLog.log('created', userId, { description: `Imported ${data.length} ${data.length === 1 ? 'task' : 'tasks'}` });
+  await audit.record({ type: 'tasks_imported', actorId: userId, workspaceId, meta: { count: data.length } });
+  if (isFirstTask) await analytics.track('first_task_created', { userId, workspaceId });
+  return { imported: data.length };
 };
 
 // Owner, or a workspace editor with write access to the task's workspace
