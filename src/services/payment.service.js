@@ -5,7 +5,7 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
-const { PAID_PLANS, PLAN_NAMES } = require('../utils/plans');
+const { PAID_PLANS, PLAN_NAMES, effectivePlan } = require('../utils/plans');
 
 // Lazily constructed — throws only when a payment route is actually hit without
 // keys configured, instead of crashing the whole app at boot.
@@ -84,6 +84,72 @@ exports.createCheckoutSession = async (user, currency = 'usd', plan = 'studio') 
   const session = await client.checkout.sessions.create(params, { idempotencyKey });
 
   return { url: session.url };
+};
+
+// Moves a Studio subscriber to Agency by repricing their EXISTING subscription
+// (prorated), instead of a second checkout that would leave two subscriptions
+// billing. Only this upgrade is offered: a downgrade needs a decision on what
+// happens to clients over the new limit, so it is not available here.
+//
+// Stripe holds the truth, so the live subscription is read first and refused
+// unless it is healthy: active or trialing (not past_due: fix the card first) and
+// not already set to end. The new price is created inline (Stripe needs a product
+// id for a subscription item, unlike Checkout), in the subscription's own
+// currency. The plan is then recorded straight away; the customer.subscription.
+// updated event that follows says the same thing and is idempotent.
+exports.changePlan = async (userId, plan) => {
+  if (plan !== 'agency') throw AppError.badRequest('Only an upgrade to Agency can be made here');
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, omit: { stripeSubscriptionId: false } });
+  if (!user) throw AppError.notFound('User not found');
+  const from = effectivePlan(user);
+  if (from === 'free') throw AppError.badRequest('Subscribe to a plan first');
+  if (from === 'agency') throw AppError.badRequest('You are already on Agency');
+  if (!user.stripeSubscriptionId) throw AppError.badRequest('There is no subscription to change');
+
+  const client = getStripe();
+  let subscription;
+  try {
+    subscription = await client.subscriptions.retrieve(user.stripeSubscriptionId);
+  } catch {
+    throw new AppError('Could not read your subscription. Try again in a moment.', 502);
+  }
+  if (!['active', 'trialing'].includes(subscription.status)) {
+    throw AppError.badRequest('Your last payment needs attention before you can change plan. Update your payment method under Manage billing.');
+  }
+  if (subscription.cancel_at_period_end) {
+    throw AppError.badRequest('Your subscription is set to end. Resume it under Manage billing, then switch to Agency.');
+  }
+  const item = subscription.items?.data?.[0];
+  if (!item) throw AppError.badRequest('There is no subscription item to change');
+
+  const currency = item.price?.currency || subscription.currency;
+  const pricing = config.stripe.plans.agency[currency];
+  if (!pricing) throw AppError.badRequest(`Agency is not available in ${String(currency).toUpperCase()}`);
+
+  // A double-click or a retry within the window changes the subscription once.
+  const window = Math.floor(Date.now() / (10 * 60 * 1000));
+  const key = crypto.createHash('sha256').update(JSON.stringify([user.stripeSubscriptionId, plan, currency, window])).digest('hex');
+
+  let updated;
+  try {
+    const product = await client.products.create({ name: `Clientglass ${PLAN_NAMES[plan]} — monthly` }, { idempotencyKey: `${key}-product` });
+    updated = await client.subscriptions.update(
+      user.stripeSubscriptionId,
+      {
+        items: [{ id: item.id, price_data: { currency, product: product.id, unit_amount: pricing.amount, recurring: { interval: 'month' } } }],
+        proration_behavior: 'create_prorations',
+        metadata: { userId, plan },
+      },
+      { idempotencyKey: key }
+    );
+  } catch {
+    throw new AppError('Could not change your plan, so nothing was changed. Try again, or contact support.', 502);
+  }
+
+  await applySubscription({ ...updated, metadata: { ...updated.metadata, userId, plan } }, 'plan_change', userId);
+  await audit.record({ type: 'plan_changed', targetUserId: userId, meta: { from, to: plan, isPro: true } });
+  return { tier: plan };
 };
 
 // Stripe's hosted Customer Portal — where a subscriber updates their card,
