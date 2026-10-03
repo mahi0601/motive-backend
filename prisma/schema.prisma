@@ -156,6 +156,10 @@ model Workspace {
   // form. Off by default: turning it on opens an unauthenticated write
   // endpoint, so the owner opts in.
   statusAllowFeedback Boolean @default(false)
+  // Whether the owner is told, in the app, when someone opens the status page (at most one
+  // notice per page per quiet period, and never for the owner's own preview or for link
+  // previews and crawlers). On by default; the owner can switch it off.
+  statusNotifyViews  Boolean  @default(true)
   // Bumped whenever the milestone's name or date changes. A client approval is
   // tied to the version it was given for, so changing the milestone starts a
   // clean slate (and reusing an old name later cannot revive an old approval).
