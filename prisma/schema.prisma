@@ -79,6 +79,11 @@ model User {
   // checkbox yet.
   termsAcceptedAt  DateTime?
   termsVersion     String?
+  // True for a brand-new account made with Google, which has no sign-up checkbox: the
+  // app holds it on an "agree to continue" page until it agrees (POST
+  // /api/users/me/accept-terms). Existing accounts are never marked, so nobody is
+  // locked out by this being introduced.
+  termsPending     Boolean  @default(false)
   avatar           String   @default("")
   // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
   // endpoint's week/month/quarter ranges in the user's own day, instead of
