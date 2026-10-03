@@ -665,6 +665,8 @@ exports.setMilestones = async (workspaceId, requesterId, list) => {
 };
 
 const STATUS_PAGE_TASK_LIMIT = 200;
+const SHIPPED_WINDOW_DAYS = 7;
+const SHIPPED_ITEMS = 10;
 
 // Everything the public page may see, and nothing else: an allowlist built
 // field-by-field (like safeInviteFields), never a spread of a task row. No
@@ -716,7 +718,12 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
   const approvedAtOf = new Map(latest.filter((f) => f.kind === 'approve').map((f) => [f.milestoneId, f.createdAt]));
   const milestones = ws.milestones.map((m) => ({ id: m.id, title: m.title, date: m.date, approvedAt: approvedAtOf.get(m.id) ?? null }));
 
-  const [counts, tasks] = await Promise.all([
+  // What finished in the last week, on its own: the task list below is capped and lists
+  // done work last, so on a big project the recent wins would be the first things cut.
+  const shippedSince = new Date(Date.now() - SHIPPED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const shippedWhere = { workspaceId: ws.id, status: 'done', completedAt: { gte: shippedSince } };
+
+  const [counts, tasks, shippedCount, shipped] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
     prisma.task.findMany({
       where: { workspaceId: ws.id },
@@ -725,6 +732,8 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
       orderBy: [{ status: 'asc' }, { dueDate: { sort: 'asc', nulls: 'last' } }],
       take: STATUS_PAGE_TASK_LIMIT,
     }),
+    prisma.task.count({ where: shippedWhere }),
+    prisma.task.findMany({ where: shippedWhere, orderBy: { completedAt: 'desc' }, take: SHIPPED_ITEMS, select: { title: true, completedAt: true } }),
   ]);
 
   const summary = { todo: 0, in_progress: 0, done: 0 };
@@ -746,6 +755,8 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
       allowFeedback: ws.statusAllowFeedback,
     },
     summary: { ...summary, total, percent },
+    // Titles and dates only, like the list below. `count` is exact; `items` is the newest few.
+    recent: { days: SHIPPED_WINDOW_DAYS, count: shippedCount, items: shipped.map((t) => ({ title: t.title, completedAt: t.completedAt })) },
     tasks: tasks.map((t) => ({
       title: t.title,
       status: t.status,
