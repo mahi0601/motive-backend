@@ -18,6 +18,11 @@ exports.createTask = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, task });
 });
 
+exports.importTasks = asyncHandler(async (req, res) => {
+  const result = await TaskService.importMany(req.body.tasks, req.user.id, req.body.workspaceId);
+  res.status(201).json({ success: true, ...result });
+});
+
 exports.updateTask = asyncHandler(async (req, res) => {
   const task = await TaskService.update(req.params.id, req.body, req.user.id);
   res.json({ success: true, task });
