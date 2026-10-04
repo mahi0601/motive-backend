@@ -13,6 +13,7 @@ const notificationRoutes = require('./notification.routes');
 const activityRoutes = require('./activity.routes');
 const digestRoutes = require('./digest.routes');
 const workspaceRoutes = require('./workspace.routes');
+const clientTemplateRoutes = require('./clientTemplate.routes');
 const inviteRoutes = require('./invite.routes');
 const pageRoutes = require('./page.routes');
 const blockRoutes = require('./block.routes');
@@ -35,6 +36,7 @@ router.use('/digest', digestRoutes);
 
 // Notion-style workspace
 router.use('/workspaces', workspaceRoutes);
+router.use('/client-templates', clientTemplateRoutes);
 router.use('/invites', inviteRoutes);
 // Public, read-only client status page (no auth — the share token is the credential).
 router.use('/status', statusRoutes);
