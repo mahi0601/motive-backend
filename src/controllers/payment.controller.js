@@ -1,5 +1,7 @@
 const PaymentService = require('../services/payment.service');
 const RazorpayService = require('../services/razorpay.service');
+const PaypalService = require('../services/paypal.service');
+const CashfreeService = require('../services/cashfree.service');
 const UserService = require('../services/user.service');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
@@ -9,25 +11,29 @@ exports.createCheckoutSession = asyncHandler(async (req, res) => {
   const user = await UserService.getProfile(req.user.id);
   if (!user) throw AppError.notFound('User not found');
 
-  const { url, provider } = await PaymentService.createCheckoutSession(user, req.body.currency, req.body.plan);
-  res.status(200).json({ success: true, url, provider });
+  const result = await PaymentService.createCheckoutSession(user, req.body.currency, req.body.plan, {
+    provider: req.body.provider,
+    phone: req.body.phone,
+  });
+  // { provider, url } to redirect to, or { provider, sessionId, mode } for a gateway opened by an SDK.
+  res.status(200).json({ success: true, ...result });
 });
 
-// Which gateway takes each currency right now (null = unavailable), so the billing card can
-// say so before a click instead of after it.
+// Which gateways take each currency right now, in the order to offer them (an empty list =
+// unavailable), so the billing card can show a "Pay with" choice or say so before a click.
 exports.getOptions = asyncHandler(async (req, res) => {
-  res.status(200).json({ success: true, providers: PaymentService.getOptions() });
+  res.status(200).json({ success: true, options: PaymentService.getOptions() });
 });
 
-// Razorpay has no redirect back and no customer portal, so the app asks for the current state
-// when the buyer returns, and cancels from here.
+// The gateways with no redirect back and no hosted billing page (Razorpay, PayPal, Cashfree): the
+// app asks for the current state when the buyer returns, and cancels from here.
 exports.syncPayment = asyncHandler(async (req, res) => {
-  const result = await RazorpayService.sync(req.user.id);
+  const result = await PaymentService.syncForUser(req.user.id);
   res.status(200).json({ success: true, ...result });
 });
 
 exports.cancelSubscription = asyncHandler(async (req, res) => {
-  const result = await RazorpayService.cancelAtPeriodEnd(req.user.id);
+  const result = await PaymentService.cancelForUser(req.user.id);
   res.status(200).json({ success: true, ...result });
 });
 
@@ -90,5 +96,33 @@ exports.razorpayWebhook = asyncHandler(async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
   await RazorpayService.handleWebhook(event, { eventId: req.headers['x-razorpay-event-id'], rawBody: req.body });
+  res.status(200).json({ received: true });
+});
+
+// PayPal's webhook: raw body, verified by asking PayPal to check its own signature. Provider
+// conventions again: plain-text 400 on a bad signature, { received: true } on success, 5xx to retry.
+exports.paypalWebhook = asyncHandler(async (req, res) => {
+  let event;
+  try {
+    event = await PaypalService.verifyWebhook(req.body, req.headers);
+  } catch (err) {
+    logger.error('PayPal webhook signature verification failed', err);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+  await PaypalService.handleWebhook(event);
+  res.status(200).json({ received: true });
+});
+
+// Cashfree's webhook: raw body, HMAC of `timestamp + body` with the client secret.
+exports.cashfreeWebhook = asyncHandler(async (req, res) => {
+  const timestamp = req.headers['x-webhook-timestamp'];
+  let event;
+  try {
+    event = CashfreeService.verifyWebhook(req.body, req.headers['x-webhook-signature'], timestamp);
+  } catch (err) {
+    logger.error('Cashfree webhook signature verification failed', err);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+  await CashfreeService.handleWebhook(event, { timestamp, rawBody: req.body });
   res.status(200).json({ received: true });
 });

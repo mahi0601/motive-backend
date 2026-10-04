@@ -66,28 +66,36 @@ describe('razorpay', () => {
   });
 
   describe('which gateway takes which currency', () => {
-    test('INR goes to Razorpay when configured, USD stays on Stripe', () => {
-      expect(paymentService.providerFor('inr')).toBe('razorpay');
-      expect(paymentService.providerFor('usd')).toBe('stripe');
-      expect(paymentService.getOptions()).toEqual({ usd: 'stripe', inr: 'razorpay' });
+    const ids = (list) => list.map((g) => g.id);
+
+    test('INR offers Razorpay first, then Stripe; USD offers Stripe', () => {
+      const options = paymentService.getOptions();
+      expect(ids(options.usd)).toEqual(['stripe']);
+      expect(ids(options.inr)).toEqual(['razorpay', 'stripe']);
     });
 
     test('INR falls back to Stripe without Razorpay keys, and to nothing without either', () => {
       const saved = { ...config.razorpay };
-      Object.assign(config.razorpay, { keyId: '', keySecret: '' });
-      expect(paymentService.providerFor('inr')).toBe('stripe');
       const stripeKey = config.stripe.secretKey;
-      config.stripe.secretKey = '';
-      expect(paymentService.getOptions()).toEqual({ usd: null, inr: null });
-      config.stripe.secretKey = stripeKey;
-      Object.assign(config.razorpay, saved);
+      try {
+        Object.assign(config.razorpay, { keyId: '', keySecret: '' });
+        expect(ids(paymentService.getOptions().inr)).toEqual(['stripe']);
+        config.stripe.secretKey = '';
+        expect(paymentService.getOptions()).toEqual({ usd: [], inr: [] });
+      } finally {
+        config.stripe.secretKey = stripeKey;
+        Object.assign(config.razorpay, saved);
+      }
     });
 
-    test('with no provider for the currency, checkout is a clear 503, not a 500', async () => {
+    test('with no gateway for the currency, checkout is a clear 503, not a 500', async () => {
       const stripeKey = config.stripe.secretKey;
       config.stripe.secretKey = '';
-      await expect(paymentService.createCheckoutSession(user, 'usd', 'studio')).rejects.toMatchObject({ statusCode: 503 });
-      config.stripe.secretKey = stripeKey;
+      try {
+        await expect(paymentService.createCheckoutSession(user, 'usd', 'studio')).rejects.toMatchObject({ statusCode: 503 });
+      } finally {
+        config.stripe.secretKey = stripeKey;
+      }
     });
   });
 
@@ -373,6 +381,14 @@ describe('razorpay', () => {
       expect(made('POST /subscriptions/sub_ID/cancel')).toHaveLength(1);
     });
 
+    test('works while a failed charge is being retried (stored as past_due, not Razorpay\'s own "pending")', async () => {
+      await subscribe();
+      await razorpay.handleWebhook(eventFor(user, 'subscription.pending', { status: 'pending' }), { eventId: eid() });
+      expect((await reload(user)).subscriptionStatus).toBe('past_due');
+      reply({ 'POST /subscriptions/sub_ID/cancel': { id: 'sub_TEST1' } });
+      await expect(razorpay.cancelAtPeriodEnd(user.id)).resolves.toEqual({ cancelAtPeriodEnd: true });
+    });
+
     test('refused when there is no live Razorpay subscription', async () => {
       await expect(razorpay.cancelAtPeriodEnd(user.id)).rejects.toMatchObject({ statusCode: 400 });
     });
@@ -428,7 +444,9 @@ describe('razorpay', () => {
     test('needs sign-in and says which gateway takes each currency', async () => {
       expect((await request(app).get('/api/payments/options')).status).toBe(401);
       const res = await request(app).get('/api/payments/options').set('Authorization', `Bearer ${await accessTokenFor(user)}`);
-      expect(res.body).toEqual({ success: true, providers: { usd: 'stripe', inr: 'razorpay' } });
+      const stripe = { id: 'stripe', label: 'Stripe', needsPhone: false, handoff: 'redirect' };
+      const rzp = { id: 'razorpay', label: 'Razorpay', needsPhone: false, handoff: 'redirect' };
+      expect(res.body).toEqual({ success: true, options: { usd: [stripe], inr: [rzp, stripe] } });
     });
 
     test('the secret is never returned in the profile', async () => {

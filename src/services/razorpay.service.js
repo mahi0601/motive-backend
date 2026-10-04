@@ -18,8 +18,8 @@ const logger = require('../config/logger');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
-const analytics = require('./analytics.service');
 const { PAID_PLANS, PLAN_NAMES } = require('../utils/plans');
+const { applyGatewayState, PAYING } = require('./subscriptionState');
 
 const API = 'https://api.razorpay.com/v1';
 const CURRENCY = 'INR';
@@ -130,56 +130,28 @@ exports.createCheckout = async (user, plan) => {
 const planOf = (entity) => (PAID_PLANS.includes(entity.notes?.plan) ? entity.notes.plan : 'agency');
 const dateOf = (seconds) => (seconds ? new Date(seconds * 1000) : null);
 
-// Brings the user's flags in line with a Razorpay subscription, as the Stripe path does:
-// `isPro` is recomputed from proLifetime, so a grandfathered user whose subscription ends stays
-// Pro. Used by the webhook and by sync, which say the same thing and are both idempotent.
-const applySubscription = async (entity) => {
-  if (!entity?.id) return null;
-  const userId = entity.notes?.userId;
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ razorpaySubscriptionId: entity.id }, ...(userId ? [{ id: userId }] : [])] },
-    omit: { razorpaySubscriptionId: false },
+// Brings the user's flags in line with a Razorpay subscription by mapping its status onto the
+// shared state (subscriptionState.js). Used by the webhook and by sync, which say the same thing
+// and are both idempotent.
+const stateOf = (entity) => ({
+  // `pending` = a charge failed and Razorpay is retrying: stored as past_due, access stays on.
+  status: entity.status === 'pending' ? 'past_due' : entity.status === 'halted' ? 'unpaid' : ENDED_STATUSES.includes(entity.status) ? 'canceled' : entity.status,
+  paid: PAID_STATUSES.includes(entity.status),
+  inFlight: entity.status === 'authenticated',
+  ended: ENDED_STATUSES.includes(entity.status),
+  periodEnd: dateOf(entity.current_end),
+  plan: planOf(entity),
+});
+
+const applySubscription = (entity) =>
+  applyGatewayState({
+    provider: 'razorpay',
+    idColumn: 'razorpaySubscriptionId',
+    id: entity?.id,
+    userHint: entity?.notes?.userId,
+    state: stateOf(entity || {}),
+    cancelDuplicate: (id) => call('POST', `/subscriptions/${encodeURIComponent(id)}/cancel`, { cancel_at_cycle_end: 0 }),
   });
-  if (!user) return null; // not one of ours, or the account is gone
-
-  // Matched only by the note, and the user already pays through a different live subscription:
-  // this is a second one (a double-click that both got paid). Cancel it rather than bill twice.
-  if (user.razorpaySubscriptionId && user.razorpaySubscriptionId !== entity.id && PAID_STATUSES.includes(user.subscriptionStatus)) {
-    if (PAID_STATUSES.includes(entity.status) || entity.status === 'authenticated') {
-      try {
-        await call('POST', `/subscriptions/${encodeURIComponent(entity.id)}/cancel`, { cancel_at_cycle_end: 0 });
-        await audit.record({ type: 'duplicate_subscription_cancelled', targetUserId: user.id, meta: { provider: 'razorpay' } });
-      } catch {
-        logger.error('Could not cancel a duplicate Razorpay subscription', { userId: user.id });
-      }
-    }
-    return user.id;
-  }
-
-  const ended = ENDED_STATUSES.includes(entity.status);
-  // Not Pro until paid: `created` and `authenticated` (mandate set, first charge still to come).
-  const status = entity.status === 'pending' ? 'past_due' : entity.status === 'halted' ? 'unpaid' : ended ? 'canceled' : entity.status;
-  const nextIsPro = user.proLifetime || PAID_STATUSES.includes(entity.status);
-
-  if (nextIsPro !== user.isPro) {
-    await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: nextIsPro, status, provider: 'razorpay' } });
-    if (nextIsPro) await analytics.track('upgraded', { userId: user.id });
-  }
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      razorpaySubscriptionId: entity.id,
-      paymentProvider: 'razorpay',
-      subscriptionStatus: status,
-      proPeriodEnd: dateOf(entity.current_end) ?? user.proPeriodEnd,
-      // Set when the buyer cancels (cancel below); cleared once it has ended or been replaced.
-      subscriptionCancelAtPeriodEnd: !ended && PAID_STATUSES.includes(entity.status) ? user.subscriptionCancelAtPeriodEnd : false,
-      isPro: nextIsPro,
-      plan: user.proLifetime ? 'agency' : nextIsPro ? planOf(entity) : 'free',
-    },
-  });
-  return user.id;
-};
 
 // ---- webhook --------------------------------------------------------------------------
 
@@ -241,7 +213,8 @@ exports.sync = async (userId) => {
 exports.cancelAtPeriodEnd = async (userId) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { razorpaySubscriptionId: false } });
   if (!user?.razorpaySubscriptionId || user.paymentProvider !== 'razorpay') throw AppError.badRequest('There is no subscription to cancel here');
-  if (!PAID_STATUSES.includes(user.subscriptionStatus)) throw AppError.badRequest('There is no active subscription to cancel');
+  // Compared against OUR stored status: a charge being retried is stored as past_due.
+  if (!PAYING.includes(user.subscriptionStatus)) throw AppError.badRequest('There is no active subscription to cancel');
   if (user.subscriptionCancelAtPeriodEnd) return { cancelAtPeriodEnd: true };
   try {
     await call('POST', `/subscriptions/${encodeURIComponent(user.razorpaySubscriptionId)}/cancel`, { cancel_at_cycle_end: 1 });

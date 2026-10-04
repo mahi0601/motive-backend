@@ -55,6 +55,25 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # PayPal (USD only). Optional. Sandbox until verified end to end: PAYPAL_MODE is sandbox unless
+      # it is exactly "live". The webhook id is shown by PayPal for the webhook you add
+      # (URL https://<this-service>/api/payments/paypal/webhook).
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: PAYPAL_MODE
+        value: sandbox
+      # Cashfree (INR). Optional. CASHFREE_MODE is sandbox unless it is exactly "production". Webhooks
+      # are signed with the client secret (URL https://<this-service>/api/payments/cashfree/webhook).
+      - key: CASHFREE_CLIENT_ID
+        sync: false
+      - key: CASHFREE_CLIENT_SECRET
+        sync: false
+      - key: CASHFREE_MODE
+        value: sandbox
       # Per-MONTH amounts for each paid plan (Studio, Agency). PLACEHOLDERS until
       # checked with real buyers; keep the frontend's src/config/plans.js in step.
       - key: STUDIO_PRICE_USD_CENTS

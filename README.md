@@ -69,6 +69,8 @@ Set `ALLOW_REMOTE_TEST_DB=1` only if you deliberately want to run against a host
 | `FRONTEND_URL` | The deployed frontend's real origin |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard — see Stripe below |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Razorpay Dashboard — optional, INR for buyers in India; see Razorpay below |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_MODE` | PayPal developer dashboard — optional, USD; see PayPal below |
+| `CASHFREE_CLIENT_ID`, `CASHFREE_CLIENT_SECRET`, `CASHFREE_MODE` | Cashfree dashboard — optional, INR; see Cashfree below |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend dashboard — needs a verified sending domain |
 | `SENTRY_DSN` | A Sentry project (Node platform) |
 | `LOGTAIL_SOURCE_TOKEN` | Optional — a Better Stack (Logtail) source |
@@ -95,6 +97,36 @@ Stripe is invite-only for new Indian accounts, so INR checkout can run on Razorp
 3. Plans are created on demand and remembered (`ProviderPlan`), one per plan and amount, from the same `*_PRICE_INR_PAISE` values. Changing a price makes a new plan and never edits one that existing subscribers are on.
 4. How it differs from Stripe, so support questions have answers: a Razorpay payment link has **no redirect back**, so after paying the app asks `POST /api/payments/sync` (and the webhook usually lands first); there is **no customer portal**, so a subscriber cancels in the app (`POST /api/payments/cancel`, at the end of the period, and a cancelled subscription cannot be resumed: they subscribe again); and there is **no in-app Studio to Agency switch** (a UPI subscription cannot be edited and Razorpay documents no proration), so that button is hidden and the card says to cancel at period end and subscribe to Agency, or contact support. Access follows the subscription: `active` and `pending` (a failed charge being retried) keep it on; `halted`, `cancelled`, `completed` and `expired` end it; `created` and `authenticated` grant nothing.
 5. Recurring card payments in India are subject to RBI rules and UPI AutoPay has a per-charge limit; which methods a buyer is offered depends on your Razorpay account activation and their bank. Do not promise a method in the UI that has not been tested in your account.
+
+### Several gateways, one "Pay with" choice
+
+Stripe, Razorpay, PayPal and Cashfree are separate gateways behind one registry (`src/services/gateways/`). A gateway is offered for a currency only when it supports it **and** its keys are set, in the order `PAYMENT_PROVIDER_ORDER_USD` (default `stripe,paypal`) / `PAYMENT_PROVIDER_ORDER_INR` (default `razorpay,cashfree,stripe`); the first is preselected, and the billing card shows a "Pay with" choice only when there is more than one. `GET /api/payments/options` lists them; with none for a currency the card says so up front. Each gateway maps its own statuses onto one shared rule set (`src/services/subscriptionState.js`): nobody gets access before paying; a charge being retried keeps access; ended statuses revoke it; a lifetime buyer never loses Pro. Adding a gateway is a service file with a checkout call, a verified webhook and the same state mapping, then one entry in the registry.
+
+| | Stripe | Razorpay | PayPal | Cashfree |
+|---|---|---|---|---|
+| Currencies | USD, INR | INR | USD | INR |
+| Hosted billing page | yes | no | no | no |
+| In-app Studio to Agency switch | yes (prorated) | no | no | no |
+| Cancel | in Stripe's portal | in the app, at period end | in the app (access kept to the paid-until date) | in the app (access kept to the paid-until date) |
+| Checkout hand-off | redirect | redirect | redirect | script (SDK) |
+| Extra buyer data | none | none | none | **mobile number**, passed through, never stored |
+
+PayPal and Cashfree stop billing the moment a subscriber cancels, so the app records the date their paid period ends and keeps Pro on until then; `src/jobs/cleanup.js` (every six hours) ends it, so access can outlast the date by up to six hours.
+
+### PayPal — USD (optional)
+
+1. https://developer.paypal.com → create an app (**Sandbox** first) and put its client id and secret in `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`. `PAYPAL_MODE` is `sandbox` unless it is exactly `live`, so a typo can never charge real money.
+2. Add a webhook to that app: URL `https://<your-api-host>/api/payments/paypal/webhook`, events `BILLING.SUBSCRIPTION.*` and `PAYMENT.SALE.COMPLETED`. Copy its **webhook id** into `PAYPAL_WEBHOOK_ID` (an id, not a secret).
+3. A webhook is only a pointer: it is verified by asking PayPal to check its own signature, then the subscription is **re-read from PayPal** and that is applied, so a forged or reordered payload cannot grant access. Each event is processed once (event id).
+4. PayPal does not take INR in India, so it is offered for USD only. Product and plan are created on demand and remembered (`ProviderPlan`), one per price. Status map: `ACTIVE` paid (past due if a charge has failed); `APPROVAL_PENDING` / `APPROVED` not paid; `SUSPENDED`, `CANCELLED`, `EXPIRED` ended.
+
+### Cashfree — INR (optional)
+
+1. Cashfree dashboard → API keys (**sandbox** first) into `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET`. `CASHFREE_MODE` is `sandbox` unless it is exactly `production`; `CASHFREE_API_VERSION` is sent as `x-api-version`.
+2. Webhook URL `https://<your-api-host>/api/payments/cashfree/webhook`. Cashfree signs it with HMAC-SHA256 over `timestamp + raw body` using the client secret, so there is no separate secret. Messages older than ten minutes are rejected when the timestamp is a number.
+3. Checkout needs the buyer's **mobile number**. It goes to Cashfree and is never stored here (add it to the privacy policy). Creating a subscription returns a session id and the browser opens Cashfree's checkout with its script (`https://sdk.cashfree.com/js/v3/cashfree.js`): a Content-Security-Policy must allow that host (see the frontend README).
+4. A mandate can be `ACTIVE` before its first debit, so **access is granted only on evidence of a successful payment** (a signed payment-success event, or a successful payment on the subscription's list), never on a status alone; and an unknown status never takes access from someone already paying. Amounts are sent in rupees; `CASHFREE_MAX_CYCLES` (default 120) is the number of monthly debits the mandate allows.
+5. **Verify in the Cashfree sandbox before going live**, because Cashfree's docs do not settle these: when the first charge happens relative to authorization, the exact shape of the payments list, what the buyer's return URL carries, and whether cancelling is immediate. The app does not depend on any of them being a particular way, but confirm the plan turns on after the first payment and that cancelling behaves as the Cancel text says.
 
 ### Google OAuth
 
