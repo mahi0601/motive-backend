@@ -65,3 +65,16 @@ exports.milestonesRules = [
     .custom((v) => v === '' || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v))))
     .withMessage('a milestone date must be a date (YYYY-MM-DD)'),
 ];
+
+// Copy a workspace's structure into a new one. `include` says what to copy (each flag a
+// real boolean, all on when omitted); `startDate` is where the earliest date lands.
+const INCLUDE_FLAGS = ['tasks', 'pages', 'milestones', 'statusText'];
+exports.duplicateWorkspaceRules = [
+  body('name').isString().withMessage('A name is required').bail().trim().isLength({ min: 1, max: 100 }).withMessage('The name must be 1–100 characters'),
+  body('startDate')
+    .optional({ nullable: true })
+    .custom((v) => v === '' || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v))))
+    .withMessage('startDate must be a date (YYYY-MM-DD)'),
+  body('include').optional({ nullable: true }).isObject().withMessage('include must be an object'),
+  ...INCLUDE_FLAGS.map((f) => body(`include.${f}`).optional().isBoolean({ strict: true }).withMessage(`include.${f} must be true or false`)),
+];

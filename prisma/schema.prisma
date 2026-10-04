@@ -119,6 +119,7 @@ model User {
   assignedTasks   Task[]   @relation("TaskAssignee")
   pages           Page[]
   workspacesOwned Workspace[]
+  clientTemplates ClientTemplate[]
   memberships     WorkspaceMember[]
   invitesSent     WorkspaceInvite[]
   comments        Comment[]
@@ -200,6 +201,21 @@ model Milestone {
   feedback    ClientFeedback[]
 
   @@index([workspaceId, position])
+}
+
+// A reusable starting point for a new client (see clientTemplate.service.js). `snapshot`
+// is a structure from workspaceCopy.service.js: sanitised when saved (no comments, files,
+// people, approvals or links to uploads) and holds day offsets, not dates.
+model ClientTemplate {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description String   @default("")
+  snapshot    Json
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId, createdAt])
 }
 
 // Something a client sent from the public status page (see feedback.service.js).

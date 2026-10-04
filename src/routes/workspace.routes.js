@@ -3,7 +3,7 @@ const router = require('express').Router();
 const WorkspaceController = require('../controllers/workspace.controller');
 const auth = require('../middlewares/auth.middleware');
 const validate = require('../middlewares/validate.middleware');
-const { inviteRules, roleUpdateRules, createWorkspaceRules, statusPageRules, milestonesRules } = require('../validators/workspace.validator');
+const { inviteRules, roleUpdateRules, createWorkspaceRules, statusPageRules, milestonesRules, duplicateWorkspaceRules } = require('../validators/workspace.validator');
 
 // Scoped to just create/resend — the two routes that can spam someone's
 // inbox. Reads and revoke/accept/decline are unaffected. Mirrors server.js's
@@ -43,6 +43,17 @@ router.patch('/:id/feedback/:feedbackId/read', WorkspaceController.markFeedbackR
 router.delete('/:id/feedback/:feedbackId', WorkspaceController.deleteFeedback);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
+// A copy can create hundreds of rows, so it is capped well below the global limit.
+// DUPLICATE_RATE_MAX can raise it (tests); only a positive number counts.
+const duplicateMax = Number.parseInt(process.env.DUPLICATE_RATE_MAX, 10);
+const duplicateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: duplicateMax > 0 ? duplicateMax : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many copies, try again later.' },
+});
+router.post('/:id/duplicate', duplicateLimiter, duplicateWorkspaceRules, validate, WorkspaceController.duplicate);
 router.get('/:id/engagement', WorkspaceController.getEngagement);
 router.put('/:id/milestones', milestonesRules, validate, WorkspaceController.setMilestones);
 
