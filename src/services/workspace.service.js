@@ -714,6 +714,37 @@ exports.getEngagement = async (workspaceId, requesterId) => {
 };
 
 const STATUS_PAGE_TASK_LIMIT = 200;
+const SHIPPED_WINDOW_DAYS = 7;
+const SHIPPED_ITEMS = 10;
+const THROUGHPUT_WEEKS = 8;
+
+// Monday 00:00 UTC of the week containing `d`.
+const mondayUtc = (d) => {
+  const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000);
+};
+
+// How many tasks were finished in each of the last THROUGHPUT_WEEKS weeks (Monday to
+// Sunday, UTC), oldest first, the last being this week so far. (The column holds UTC wall-clock
+// time, so it is truncated as it is: converting it again would make the answer depend on the
+// database session's timezone.) Counted in the database, so
+// it is exact however big the project is, and it returns counts only. Every week is present,
+// with 0 when nothing shipped.
+const weeklyThroughput = async (workspaceId) => {
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const first = new Date(mondayUtc(new Date()).getTime() - (THROUGHPUT_WEEKS - 1) * WEEK_MS);
+  const rows = await prisma.$queryRaw`
+    SELECT to_char(date_trunc('week', "completedAt"), 'YYYY-MM-DD') AS week, count(*)::int AS n
+    FROM "Task"
+    WHERE "workspaceId" = ${workspaceId} AND "status" = 'done' AND "completedAt" >= ${first}
+    GROUP BY 1`;
+  const byWeek = new Map(rows.map((r) => [r.week, Number(r.n)]));
+  const items = Array.from({ length: THROUGHPUT_WEEKS }, (_, i) => {
+    const start = new Date(first.getTime() + i * WEEK_MS).toISOString().slice(0, 10);
+    return { start, count: byWeek.get(start) ?? 0 };
+  });
+  return { weeks: THROUGHPUT_WEEKS, items };
+};
 
 // Everything the public page may see, and nothing else: an allowlist built
 // field-by-field (like safeInviteFields), never a spread of a task row. No
@@ -770,7 +801,12 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
   const approvedAtOf = new Map(latest.filter((f) => f.kind === 'approve').map((f) => [f.milestoneId, f.createdAt]));
   const milestones = ws.milestones.map((m) => ({ id: m.id, title: m.title, date: m.date, approvedAt: approvedAtOf.get(m.id) ?? null }));
 
-  const [counts, tasks] = await Promise.all([
+  // What finished in the last week, on its own: the task list below is capped and lists
+  // done work last, so on a big project the recent wins would be the first things cut.
+  const shippedSince = new Date(Date.now() - SHIPPED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const shippedWhere = { workspaceId: ws.id, status: 'done', completedAt: { gte: shippedSince } };
+
+  const [counts, tasks, shippedCount, shipped, throughput] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
     prisma.task.findMany({
       where: { workspaceId: ws.id },
@@ -779,6 +815,9 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       orderBy: [{ status: 'asc' }, { dueDate: { sort: 'asc', nulls: 'last' } }],
       take: STATUS_PAGE_TASK_LIMIT,
     }),
+    prisma.task.count({ where: shippedWhere }),
+    prisma.task.findMany({ where: shippedWhere, orderBy: { completedAt: 'desc' }, take: SHIPPED_ITEMS, select: { title: true, completedAt: true } }),
+    weeklyThroughput(ws.id),
   ]);
 
   const summary = { todo: 0, in_progress: 0, done: 0 };
@@ -800,6 +839,10 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       allowFeedback: ws.statusAllowFeedback,
     },
     summary: { ...summary, total, percent },
+    // Titles and dates only, like the list below. `count` is exact; `items` is the newest few.
+    recent: { days: SHIPPED_WINDOW_DAYS, count: shippedCount, items: shipped.map((t) => ({ title: t.title, completedAt: t.completedAt })) },
+    // Tasks finished per week for the last 8 weeks: counts only.
+    throughput,
     tasks: tasks.map((t) => ({
       title: t.title,
       status: t.status,
