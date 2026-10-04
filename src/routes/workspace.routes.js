@@ -21,6 +21,8 @@ const inviteLimiter = rateLimit({
 router.use(auth);
 router.get('/', WorkspaceController.list);
 router.post('/', createWorkspaceRules, validate, WorkspaceController.create);
+// Every client the caller owns, most in need of attention first. Before any /:id route.
+router.get('/overview', WorkspaceController.overview);
 
 router.post('/:id/invites', inviteLimiter, inviteRules, validate, WorkspaceController.createInvite);
 router.get('/:id/invites', WorkspaceController.listInvites);
