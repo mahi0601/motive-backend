@@ -1,10 +1,17 @@
 const WorkspaceService = require('../services/workspace.service');
 const FeedbackService = require('../services/feedback.service');
+const ClientOverviewService = require('../services/clientOverview.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.list = asyncHandler(async (req, res) => {
   const workspaces = await WorkspaceService.listForUser(req.user.id);
   res.json({ success: true, workspaces });
+});
+
+// Every client the caller owns with the numbers that say who needs attention, most in need first.
+exports.overview = asyncHandler(async (req, res) => {
+  const clients = await ClientOverviewService.overview(req.user.id);
+  res.json({ success: true, clients });
 });
 
 exports.create = asyncHandler(async (req, res) => {
