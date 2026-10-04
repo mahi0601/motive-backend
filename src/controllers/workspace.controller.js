@@ -1,11 +1,18 @@
 const WorkspaceService = require('../services/workspace.service');
 const WorkspaceCopyService = require('../services/workspaceCopy.service');
 const FeedbackService = require('../services/feedback.service');
+const ClientOverviewService = require('../services/clientOverview.service');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.list = asyncHandler(async (req, res) => {
   const workspaces = await WorkspaceService.listForUser(req.user.id);
   res.json({ success: true, workspaces });
+});
+
+// Every client the caller owns with the numbers that say who needs attention, most in need first.
+exports.overview = asyncHandler(async (req, res) => {
+  const clients = await ClientOverviewService.overview(req.user.id);
+  res.json({ success: true, clients });
 });
 
 exports.create = asyncHandler(async (req, res) => {
@@ -66,6 +73,11 @@ exports.updateStatusPage = asyncHandler(async (req, res) => {
 exports.duplicate = asyncHandler(async (req, res) => {
   const result = await WorkspaceCopyService.duplicate(req.params.id, req.user.id, req.body);
   res.status(201).json({ success: true, ...result });
+});
+
+exports.getEngagement = asyncHandler(async (req, res) => {
+  const engagement = await WorkspaceService.getEngagement(req.params.id, req.user.id);
+  res.json({ success: true, ...engagement });
 });
 
 exports.setMilestones = asyncHandler(async (req, res) => {

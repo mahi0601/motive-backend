@@ -5,6 +5,7 @@ const analytics = require('./analytics.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
+const logger = require('../config/logger');
 const { PLAN_LIMITS, PLAN_NAMES, NEXT_PLAN, effectivePlan } = require('../utils/plans');
 
 // Team size per workspace and the number of active clients depend on the owner's
@@ -563,6 +564,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
     statusAccent: input.accent,
     statusHideBranding: input.hideBranding,
     statusAllowFeedback: input.allowFeedback,
+    statusNotifyViews: input.notifyViews,
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
 
@@ -584,7 +586,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },
     data,
-    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true },
+    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true, statusNotifyViews: true },
   });
   await applyFirstMilestone(workspaceId, firstMilestone);
   const first = await prisma.milestone.findFirst({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { title: true, date: true } });
@@ -664,7 +666,85 @@ exports.setMilestones = async (workspaceId, requesterId, list) => {
   return prisma.milestone.findMany({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { id: true, title: true, date: true } });
 };
 
+
+// Tells the owner, in the app, that their client status page was opened. At most one notice per
+// page per quiet period (a client reloading, or several people opening it, is one nudge, not a
+// flood), nothing about who looked, and never on a failure: it runs after the response is sent.
+// A few-second in-memory guard catches two near-simultaneous first views before either has written.
+const VIEW_NOTICE_QUIET_MS = 12 * 60 * 60 * 1000;
+const SIMULTANEOUS_MS = 5 * 1000;
+const justNotified = new Map();
+const notifyOwnerOfView = async (ws) => {
+  try {
+    if (!ws.statusNotifyViews) return;
+    const now = Date.now();
+    for (const [id, at] of justNotified) if (now - at > SIMULTANEOUS_MS) justNotified.delete(id);
+    if (justNotified.has(ws.id)) return;
+    justNotified.set(ws.id, now);
+
+    const title = `Someone opened “${ws.name}”`.slice(0, 80);
+    const recent = await prisma.notification.findFirst({
+      where: { userId: ws.ownerId, type: 'client_view', title, createdAt: { gt: new Date(now - VIEW_NOTICE_QUIET_MS) } },
+      select: { id: true },
+    });
+    if (recent) return;
+    const notification = await prisma.notification.create({
+      data: { userId: ws.ownerId, title, message: 'Your client status page was just viewed.', type: 'client_view' },
+    });
+    require('../sockets/socket.handler').emitNotification(ws.ownerId, notification);
+  } catch (err) {
+    logger.warn('Could not notify the owner of a status page view', { err: err?.message });
+  }
+};
+
+// For the owner's Settings: when the page was last opened and how busy it was this week. A
+// "visit" is a distinct visitor on a day (the visitor key changes daily and is derived from
+// network and browser, never an identity), so it is the honest count of people rather than
+// reloads. Numbers and a time only.
+exports.getEngagement = async (workspaceId, requesterId) => {
+  await assertOwner(workspaceId, requesterId);
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const where = { name: 'status_page_viewed', workspaceId };
+  const [last, views7d, visitors] = await Promise.all([
+    prisma.productEvent.findFirst({ where, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+    prisma.productEvent.count({ where: { ...where, createdAt: { gte: since } } }),
+    prisma.productEvent.groupBy({ by: ['visitor'], where: { ...where, createdAt: { gte: since }, visitor: { not: null } } }),
+  ]);
+  return { lastViewedAt: last?.createdAt ?? null, views7d, visits7d: visitors.length };
+};
+
 const STATUS_PAGE_TASK_LIMIT = 200;
+const SHIPPED_WINDOW_DAYS = 7;
+const SHIPPED_ITEMS = 10;
+const THROUGHPUT_WEEKS = 8;
+
+// Monday 00:00 UTC of the week containing `d`.
+const mondayUtc = (d) => {
+  const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000);
+};
+
+// How many tasks were finished in each of the last THROUGHPUT_WEEKS weeks (Monday to
+// Sunday, UTC), oldest first, the last being this week so far. (The column holds UTC wall-clock
+// time, so it is truncated as it is: converting it again would make the answer depend on the
+// database session's timezone.) Counted in the database, so
+// it is exact however big the project is, and it returns counts only. Every week is present,
+// with 0 when nothing shipped.
+const weeklyThroughput = async (workspaceId) => {
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const first = new Date(mondayUtc(new Date()).getTime() - (THROUGHPUT_WEEKS - 1) * WEEK_MS);
+  const rows = await prisma.$queryRaw`
+    SELECT to_char(date_trunc('week', "completedAt"), 'YYYY-MM-DD') AS week, count(*)::int AS n
+    FROM "Task"
+    WHERE "workspaceId" = ${workspaceId} AND "status" = 'done' AND "completedAt" >= ${first}
+    GROUP BY 1`;
+  const byWeek = new Map(rows.map((r) => [r.week, Number(r.n)]));
+  const items = Array.from({ length: THROUGHPUT_WEEKS }, (_, i) => {
+    const start = new Date(first.getTime() + i * WEEK_MS).toISOString().slice(0, 10);
+    return { start, count: byWeek.get(start) ?? 0 };
+  });
+  return { weeks: THROUGHPUT_WEEKS, items };
+};
 
 // Everything the public page may see, and nothing else: an allowlist built
 // field-by-field (like safeInviteFields), never a spread of a task row. No
@@ -673,14 +753,16 @@ const STATUS_PAGE_TASK_LIMIT = 200;
 // assignees or other people, no descriptions, no comments or files — just a title,
 // a status and dates. The owner is warned in the UI that task
 // titles become public.
-exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) => {
+exports.getStatusByToken = async (rawToken, { visitor, preview = false, automated = false } = {}) => {
   const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
   const ws = await prisma.workspace.findUnique({
     where: { shareTokenHash: tokenHash },
     select: {
       id: true,
+      ownerId: true,
       name: true,
       icon: true,
+      statusNotifyViews: true,
       statusHeadline: true,
       statusSummary: true,
       statusAccent: true,
@@ -693,9 +775,12 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
   // Unknown, rotated and disabled links are indistinguishable on purpose.
   if (!ws) throw AppError.notFound('This status page is not available');
 
-  // Count a view only for a link that works, and not for the owner's own preview.
-  // Fire and forget: never slows the page.
-  if (!preview) analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
+  // Count a view only for a link that works, and not for the owner's own preview or a link
+  // preview / crawler. Fire and forget: never slows the page.
+  if (!preview && !automated) {
+    analytics.track('status_page_viewed', { workspaceId: ws.id, visitor });
+    notifyOwnerOfView(ws);
+  }
 
   // A milestone is approved when the latest approve-or-request-changes for its
   // CURRENT version was an approval. Only the date is exposed: the sender's typed
@@ -716,7 +801,12 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
   const approvedAtOf = new Map(latest.filter((f) => f.kind === 'approve').map((f) => [f.milestoneId, f.createdAt]));
   const milestones = ws.milestones.map((m) => ({ id: m.id, title: m.title, date: m.date, approvedAt: approvedAtOf.get(m.id) ?? null }));
 
-  const [counts, tasks] = await Promise.all([
+  // What finished in the last week, on its own: the task list below is capped and lists
+  // done work last, so on a big project the recent wins would be the first things cut.
+  const shippedSince = new Date(Date.now() - SHIPPED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const shippedWhere = { workspaceId: ws.id, status: 'done', completedAt: { gte: shippedSince } };
+
+  const [counts, tasks, shippedCount, shipped, throughput] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
     prisma.task.findMany({
       where: { workspaceId: ws.id },
@@ -725,6 +815,9 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
       orderBy: [{ status: 'asc' }, { dueDate: { sort: 'asc', nulls: 'last' } }],
       take: STATUS_PAGE_TASK_LIMIT,
     }),
+    prisma.task.count({ where: shippedWhere }),
+    prisma.task.findMany({ where: shippedWhere, orderBy: { completedAt: 'desc' }, take: SHIPPED_ITEMS, select: { title: true, completedAt: true } }),
+    weeklyThroughput(ws.id),
   ]);
 
   const summary = { todo: 0, in_progress: 0, done: 0 };
@@ -746,6 +839,10 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
       allowFeedback: ws.statusAllowFeedback,
     },
     summary: { ...summary, total, percent },
+    // Titles and dates only, like the list below. `count` is exact; `items` is the newest few.
+    recent: { days: SHIPPED_WINDOW_DAYS, count: shippedCount, items: shipped.map((t) => ({ title: t.title, completedAt: t.completedAt })) },
+    // Tasks finished per week for the last 8 weeks: counts only.
+    throughput,
     tasks: tasks.map((t) => ({
       title: t.title,
       status: t.status,
@@ -755,3 +852,6 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false } = {}) =
     truncated: total > tasks.length,
   };
 };
+
+// Test hook: the guard above is per process, so tests that make several first views in a row clear it.
+exports._internals = { resetViewNoticeGuard: () => justNotified.clear(), notifyOwnerOfView };

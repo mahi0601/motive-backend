@@ -27,3 +27,10 @@ exports.updateProfileRules = [
   body('avatar').optional({ nullable: true }).isString().isLength({ max: 2048 }),
   body('timezone').optional().isString().custom(isValidTimezone).withMessage('timezone must be a valid IANA time zone'),
 ];
+
+// A real boolean yes, not "true" or 1: this is the consent record.
+exports.acceptTermsRules = [
+  body('acceptTerms')
+    .custom((v) => v === true)
+    .withMessage('Please confirm you are 16 or older and agree to the Terms and Privacy Policy'),
+];
