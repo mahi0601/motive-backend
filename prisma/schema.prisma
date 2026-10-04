@@ -117,6 +117,8 @@ model User {
   // like Stripe's (config/prisma.js). The other state columns above are shared by both.
   paymentProvider              String?
   razorpaySubscriptionId       String?   @unique
+  paypalSubscriptionId         String?   @unique
+  cashfreeSubscriptionId       String?   @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

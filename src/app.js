@@ -56,6 +56,8 @@ const webhookLimiter = rateLimit({
 });
 app.post('/api/payments/webhook', webhookLimiter, express.raw({ type: 'application/json' }), paymentController.webhook);
 app.post('/api/payments/razorpay/webhook', webhookLimiter, express.raw({ type: 'application/json' }), paymentController.razorpayWebhook);
+app.post('/api/payments/paypal/webhook', webhookLimiter, express.raw({ type: 'application/json' }), paymentController.paypalWebhook);
+app.post('/api/payments/cashfree/webhook', webhookLimiter, express.raw({ type: 'application/json' }), paymentController.cashfreeWebhook);
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
