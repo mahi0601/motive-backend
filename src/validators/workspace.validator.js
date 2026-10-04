@@ -43,6 +43,11 @@ exports.statusPageRules = [
   body('accent').optional().isIn(ACCENTS).withMessage(`accent must be one of: ${ACCENTS.join(', ')}`),
   body('hideBranding').optional().isBoolean({ strict: true }).withMessage('hideBranding must be true or false'),
   body('allowFeedback').optional().isBoolean({ strict: true }).withMessage('allowFeedback must be true or false'),
+  body('requestAllowance')
+    .optional({ nullable: true })
+    .custom((v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 100))
+    .withMessage('requestAllowance must be a whole number from 1 to 100, or null to turn it off'),
+  body('allowRequests').optional().isBoolean({ strict: true }).withMessage('allowRequests must be true or false'),
   body('notifyViews').optional().isBoolean({ strict: true }).withMessage('notifyViews must be true or false'),
 ];
 

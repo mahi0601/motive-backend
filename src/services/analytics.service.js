@@ -17,6 +17,7 @@ const EVENTS = [
   'status_link_created',
   'status_page_viewed',
   'feedback_received',
+  'request_received',
   'upgraded',
   // Someone landed on the marketing page from the "Powered by" footer of a
   // status page: the growth loop, counted by visitor hash only.

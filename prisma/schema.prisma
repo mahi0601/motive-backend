@@ -162,6 +162,14 @@ model Workspace {
   // form. Off by default: turning it on opens an unauthenticated write
   // endpoint, so the owner opts in.
   statusAllowFeedback Boolean @default(false)
+  // Whether the public page also offers "ask for something", which the owner can
+  // turn into a task (see ClientRequest). Its own switch, off by default, for the
+  // same reason: it opens an unauthenticated write endpoint.
+  statusAllowRequests Boolean @default(false)
+  // How many accepted "in scope" requests a month the owner includes for this client
+  // (1 to 100). Null = no allowance. When set it is PUBLIC on the status page, as a
+  // count of used against included (see request.service.js#allowanceUsage).
+  statusRequestAllowance Int?
   // Whether the owner is told, in the app, when someone opens the status page (at most one
   // notice per page per quiet period, and never for the owner's own preview or for link
   // previews and crawlers). On by default; the owner can switch it off.
@@ -176,6 +184,7 @@ model Workspace {
   // the migration is additive; a later one can drop them.
   milestones         Milestone[]
   feedback           ClientFeedback[]
+  requests           ClientRequest[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -239,6 +248,31 @@ model ClientFeedback {
   milestoneVersion Int     @default(0)
   readAt         DateTime?
   createdAt      DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+// Something a client asked for from the public status page. The owner accepts it
+// (which creates a task and links it here) or declines it. What the client sees
+// is derived from the linked task, so it follows the board with no extra work.
+// `authorName` is whatever the sender typed, NOT verified, and is never shown
+// publicly. Plain text only. `taskId` goes null if the owner deletes the task.
+// Pruned after a year by jobs/cleanup.js; the task it made is kept.
+model ClientRequest {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title       String
+  details     String    @default("")
+  authorName  String
+  state       String    @default("received") // 'received' | 'accepted' | 'declined'
+  scope       String? // 'in_scope' | 'extra'
+  declineNote String?
+  taskId      String?   @unique
+  task        Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  readAt      DateTime?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
 }
@@ -379,6 +413,8 @@ model Task {
   comments    Comment[]
   files       File[]
   activityLogs ActivityLog[]
+  // The client request this task was made from, if any (see ClientRequest).
+  clientRequest ClientRequest?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 

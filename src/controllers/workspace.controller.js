@@ -1,6 +1,7 @@
 const WorkspaceService = require('../services/workspace.service');
 const WorkspaceCopyService = require('../services/workspaceCopy.service');
 const FeedbackService = require('../services/feedback.service');
+const RequestService = require('../services/request.service');
 const ClientOverviewService = require('../services/clientOverview.service');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -97,6 +98,31 @@ exports.markFeedbackRead = asyncHandler(async (req, res) => {
 
 exports.deleteFeedback = asyncHandler(async (req, res) => {
   await FeedbackService.remove(req.params.id, req.params.feedbackId, req.user.id);
+  res.json({ success: true });
+});
+
+exports.listRequests = asyncHandler(async (req, res) => {
+  const result = await RequestService.list(req.params.id, req.user.id, req.query);
+  res.json({ success: true, ...result });
+});
+
+exports.acceptRequest = asyncHandler(async (req, res) => {
+  const result = await RequestService.accept(req.params.id, req.params.requestId, req.user.id, req.body);
+  res.status(201).json({ success: true, ...result });
+});
+
+exports.declineRequest = asyncHandler(async (req, res) => {
+  const request = await RequestService.decline(req.params.id, req.params.requestId, req.user.id, req.body);
+  res.json({ success: true, request });
+});
+
+exports.updateRequest = asyncHandler(async (req, res) => {
+  const request = await RequestService.update(req.params.id, req.params.requestId, req.user.id, req.body);
+  res.json({ success: true, request });
+});
+
+exports.deleteRequest = asyncHandler(async (req, res) => {
+  await RequestService.remove(req.params.id, req.params.requestId, req.user.id);
   res.json({ success: true });
 });
 
