@@ -43,6 +43,7 @@ router.patch('/:id/feedback/:feedbackId/read', WorkspaceController.markFeedbackR
 router.delete('/:id/feedback/:feedbackId', WorkspaceController.deleteFeedback);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
+router.get('/:id/engagement', WorkspaceController.getEngagement);
 router.put('/:id/milestones', milestonesRules, validate, WorkspaceController.setMilestones);
 
 module.exports = router;

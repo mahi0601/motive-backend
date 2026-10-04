@@ -43,6 +43,7 @@ exports.statusPageRules = [
   body('accent').optional().isIn(ACCENTS).withMessage(`accent must be one of: ${ACCENTS.join(', ')}`),
   body('hideBranding').optional().isBoolean({ strict: true }).withMessage('hideBranding must be true or false'),
   body('allowFeedback').optional().isBoolean({ strict: true }).withMessage('allowFeedback must be true or false'),
+  body('notifyViews').optional().isBoolean({ strict: true }).withMessage('notifyViews must be true or false'),
 ];
 
 // The whole ordered list of milestones. Plain text, bounded; an item with an id
