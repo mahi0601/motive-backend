@@ -41,6 +41,12 @@ router.delete('/:id/share', WorkspaceController.disableShare);
 router.get('/:id/feedback', WorkspaceController.listFeedback);
 router.patch('/:id/feedback/:feedbackId/read', WorkspaceController.markFeedbackRead);
 router.delete('/:id/feedback/:feedbackId', WorkspaceController.deleteFeedback);
+// Owner-only inbox for what clients ask for; accepting one makes a task.
+router.get('/:id/requests', WorkspaceController.listRequests);
+router.post('/:id/requests/:requestId/accept', WorkspaceController.acceptRequest);
+router.post('/:id/requests/:requestId/decline', WorkspaceController.declineRequest);
+router.patch('/:id/requests/:requestId', WorkspaceController.updateRequest);
+router.delete('/:id/requests/:requestId', WorkspaceController.deleteRequest);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
 // A copy can create hundreds of rows, so it is capped well below the global limit.

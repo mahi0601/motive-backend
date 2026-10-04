@@ -564,6 +564,8 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
     statusAccent: input.accent,
     statusHideBranding: input.hideBranding,
     statusAllowFeedback: input.allowFeedback,
+    statusAllowRequests: input.allowRequests,
+    statusRequestAllowance: input.requestAllowance,
     statusNotifyViews: input.notifyViews,
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
@@ -586,7 +588,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },
     data,
-    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true, statusNotifyViews: true },
+    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true, statusAllowRequests: true, statusRequestAllowance: true, statusNotifyViews: true },
   });
   await applyFirstMilestone(workspaceId, firstMilestone);
   const first = await prisma.milestone.findFirst({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { title: true, date: true } });
@@ -768,6 +770,8 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       statusAccent: true,
       statusHideBranding: true,
       statusAllowFeedback: true,
+      statusAllowRequests: true,
+      statusRequestAllowance: true,
       milestones: { orderBy: { position: 'asc' }, take: MAX_MILESTONES, select: { id: true, title: true, date: true, version: true } },
       owner: { select: { isPro: true } },
     },
@@ -806,7 +810,7 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
   const shippedSince = new Date(Date.now() - SHIPPED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const shippedWhere = { workspaceId: ws.id, status: 'done', completedAt: { gte: shippedSince } };
 
-  const [counts, tasks, shippedCount, shipped, throughput] = await Promise.all([
+  const [counts, tasks, shippedCount, shipped, throughput, requests, allowance] = await Promise.all([
     prisma.task.groupBy({ by: ['status'], where: { workspaceId: ws.id }, _count: { _all: true } }),
     prisma.task.findMany({
       where: { workspaceId: ws.id },
@@ -818,6 +822,8 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
     prisma.task.count({ where: shippedWhere }),
     prisma.task.findMany({ where: shippedWhere, orderBy: { completedAt: 'desc' }, take: SHIPPED_ITEMS, select: { title: true, completedAt: true } }),
     weeklyThroughput(ws.id),
+    ws.statusAllowRequests ? require('./request.service').publicList(ws.id) : Promise.resolve([]),
+    ws.statusAllowRequests && ws.statusRequestAllowance ? require('./request.service').allowanceUsage(ws.id, ws.statusRequestAllowance) : Promise.resolve(null),
   ]);
 
   const summary = { todo: 0, in_progress: 0, done: 0 };
@@ -837,6 +843,7 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
       hideBranding: ws.statusHideBranding && ws.owner.isPro,
       allowFeedback: ws.statusAllowFeedback,
+      allowRequests: ws.statusAllowRequests,
     },
     summary: { ...summary, total, percent },
     // Titles and dates only, like the list below. `count` is exact; `items` is the newest few.
@@ -850,6 +857,11 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       completedAt: t.completedAt,
     })),
     truncated: total > tasks.length,
+    // Only when the owner has switched requests on: titles, a state that follows the
+    // linked task, a scope tag and any decline note. Never the sender or an id.
+    ...(ws.statusAllowRequests ? { requests } : {}),
+    // What the owner includes each month and how much of it is used: counts and a date only.
+    ...(ws.statusAllowRequests && ws.statusRequestAllowance ? { allowance } : {}),
   };
 };
 

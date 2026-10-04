@@ -10,7 +10,7 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 exports.runCleanup = async (now = new Date()) => {
   const ago = (days) => new Date(now.getTime() - days * DAY);
-  const [nativeExchangeCodes, webhookEvents, notifications, activityLogs, invites, sessions, securityEvents, clientFeedback, productEvents] = await Promise.all([
+  const [nativeExchangeCodes, webhookEvents, notifications, activityLogs, invites, sessions, securityEvents, clientFeedback, clientRequests, productEvents] = await Promise.all([
     // Single-use hand-off codes expire in 60s; a day of slack is plenty.
     prisma.nativeExchangeCode.deleteMany({ where: { expiresAt: { lt: ago(1) } } }),
     // Stripe retries for at most ~3 days, so the idempotency ledger needs far less than 30.
@@ -25,6 +25,8 @@ exports.runCleanup = async (now = new Date()) => {
     prisma.securityEvent.deleteMany({ where: { createdAt: { lt: ago(180) } } }),
     // Client feedback is kept for a year.
     prisma.clientFeedback.deleteMany({ where: { createdAt: { lt: ago(365) } } }),
+    // Client requests too; a task made from one is kept (the link just goes empty).
+    prisma.clientRequest.deleteMany({ where: { createdAt: { lt: ago(365) } } }),
     // Product analytics events are kept for 400 days (a full year plus slack).
     prisma.productEvent.deleteMany({ where: { createdAt: { lt: ago(400) } } }),
   ]);
@@ -37,6 +39,7 @@ exports.runCleanup = async (now = new Date()) => {
     sessions: sessions.count,
     securityEvents: securityEvents.count,
     clientFeedback: clientFeedback.count,
+    clientRequests: clientRequests.count,
     productEvents: productEvents.count,
   };
 };

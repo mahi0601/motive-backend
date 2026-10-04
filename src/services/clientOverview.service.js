@@ -7,6 +7,7 @@
 // same facts as the rest of the app: a "view" is a real client opening the page (previews,
 // bots and the owner's own looks are never recorded), and "done" work has a completion date.
 const prisma = require('../config/prisma');
+const requestService = require('./request.service');
 
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_CLIENTS = 50;
@@ -32,13 +33,14 @@ exports.overview = async (userId) => {
   const shippedSince = new Date(now.getTime() - SHIPPED_DAYS * DAY);
   const inClients = { workspaceId: { in: ids } };
 
-  const [milestones, open, overdue, shipped, views, unread] = await Promise.all([
+  const [milestones, open, overdue, shipped, views, unread, requestsBy] = await Promise.all([
     prisma.milestone.findMany({ where: { ...inClients, date: { gte: startOfToday } }, orderBy: { date: 'asc' }, select: { workspaceId: true, title: true, date: true } }),
     prisma.task.groupBy({ by: ['workspaceId'], where: { ...inClients, status: { not: 'done' } }, _count: { _all: true } }),
     prisma.task.groupBy({ by: ['workspaceId'], where: { ...inClients, status: { not: 'done' }, dueDate: { lt: now } }, _count: { _all: true } }),
     prisma.task.groupBy({ by: ['workspaceId'], where: { ...inClients, status: 'done', completedAt: { gte: shippedSince } }, _count: { _all: true } }),
     prisma.productEvent.groupBy({ by: ['workspaceId'], where: { name: 'status_page_viewed', ...inClients }, _max: { createdAt: true } }),
     prisma.clientFeedback.groupBy({ by: ['workspaceId'], where: { ...inClients, readAt: null }, _count: { _all: true } }),
+    requestService.unreadCounts(ids),
   ]);
 
   const openBy = countsBy(open);
@@ -54,11 +56,13 @@ exports.overview = async (userId) => {
     const linkLive = !!w.shareEnabledAt;
     const overdueCount = overdueBy.get(w.id) ?? 0;
     const unreadCount = unreadBy.get(w.id) ?? 0;
+    const requestCount = requestsBy.get(w.id) ?? 0;
 
     // Why this client needs a look, in a fixed order (it is also what the order of the list rests on).
     const attention = [];
     if (overdueCount > 0) attention.push('overdue');
     if (unreadCount > 0) attention.push('responses');
+    if (requestCount > 0) attention.push('requests');
     if (linkLive && !lastViewedAt && now - w.shareEnabledAt >= NOT_OPENED_AFTER_DAYS * DAY) attention.push('not_opened');
     if (linkLive && lastViewedAt && now - lastViewedAt > QUIET_AFTER_DAYS * DAY) attention.push('quiet');
 
@@ -72,6 +76,7 @@ exports.overview = async (userId) => {
       overdue: overdueCount,
       shippedThisWeek: shippedBy.get(w.id) ?? 0,
       unreadResponses: unreadCount,
+      unreadRequests: requestCount,
       nextMilestone: nextMilestoneBy.get(w.id) ?? null,
       attention,
     };

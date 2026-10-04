@@ -183,7 +183,7 @@ describe('GET /api/workspaces/overview', () => {
     test('numbers, dates and flags only: no task titles, people or visitor data', async () => {
       const res = await get();
       const first = res.body.clients[0];
-      expect(Object.keys(first).sort()).toEqual(['attention', 'icon', 'id', 'lastViewedAt', 'linkLive', 'name', 'nextMilestone', 'open', 'overdue', 'shippedThisWeek', 'unreadResponses']);
+      expect(Object.keys(first).sort()).toEqual(['attention', 'icon', 'id', 'lastViewedAt', 'linkLive', 'name', 'nextMilestone', 'open', 'overdue', 'shippedThisWeek', 'unreadRequests', 'unreadResponses']);
       const text = JSON.stringify(res.body);
       for (const leaked of ['SECRET TITLE', owner.email, other.email, other.id, 'v1', 'Ann', 'shareTokenHash', 'h-']) expect(text).not.toContain(leaked);
     });

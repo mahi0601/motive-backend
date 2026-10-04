@@ -27,6 +27,17 @@ const feedbackLimiter = rateLimit({
 });
 router.post('/:token/feedback', feedbackLimiter, StatusController.submitFeedback);
 
+// A request stores a row and notifies the owner just like feedback, so it is capped
+// the same way (REQUEST_RATE_MAX); the service adds a per-workspace daily cap.
+const requestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.REQUEST_RATE_MAX, 10) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+router.post('/:token/requests', requestLimiter, StatusController.submitRequest);
+
 // The marketing page reports a visit that came from a status page footer. Body-less
 // and unauthenticated, so it is capped per client like the feedback post.
 const landingLimiter = rateLimit({

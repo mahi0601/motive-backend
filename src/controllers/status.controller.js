@@ -1,6 +1,7 @@
 const WorkspaceService = require('../services/workspace.service');
 const analytics = require('../services/analytics.service');
 const FeedbackService = require('../services/feedback.service');
+const RequestService = require('../services/request.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { isAutomated } = require('../utils/automatedVisitors');
 
@@ -25,6 +26,14 @@ exports.getByToken = asyncHandler(async (req, res) => {
 // workspace takes feedback at all (otherwise the same 404 as an unknown link).
 exports.submitFeedback = asyncHandler(async (req, res) => {
   await FeedbackService.submit(req.params.token, req.body);
+  res.set('Cache-Control', 'no-store');
+  res.status(201).json({ success: true });
+});
+
+// Public — same rules as feedback: the service decides whether this workspace
+// takes requests at all (otherwise the same 404 as an unknown link).
+exports.submitRequest = asyncHandler(async (req, res) => {
+  await RequestService.submit(req.params.token, req.body);
   res.set('Cache-Control', 'no-store');
   res.status(201).json({ success: true });
 });
