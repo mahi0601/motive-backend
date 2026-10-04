@@ -4,9 +4,35 @@
 // every instance — every delete is idempotent and bounded by a date.
 const prisma = require('../config/prisma');
 const logger = require('../config/logger');
+const audit = require('../services/audit.service');
 
 const DAY = 24 * 60 * 60 * 1000;
 const SIX_HOURS = 6 * 60 * 60 * 1000;
+
+// Gateways that stop billing the moment a subscriber cancels (PayPal, Cashfree) leave the app to end
+// access when the period they paid for runs out: the cancel call recorded the date and kept Pro on.
+// This ends it. Only cancelled, non-lifetime subscribers on those two gateways are touched; Stripe
+// and Razorpay cancel at the cycle end themselves and tell us with an event. Runs with the rest of the
+// job, so access can outlast the date by up to six hours.
+exports.expireCancelledSubscriptions = async (now = new Date()) => {
+  const where = {
+    isPro: true,
+    proLifetime: false,
+    subscriptionCancelAtPeriodEnd: true,
+    proPeriodEnd: { lt: now },
+    paymentProvider: { in: ['paypal', 'cashfree'] },
+  };
+  const due = await prisma.user.findMany({ where, select: { id: true, paymentProvider: true } });
+  for (const user of due) {
+    // Re-checked in the update itself, so a user who re-subscribed since is not touched.
+    const done = await prisma.user.updateMany({
+      where: { id: user.id, ...where },
+      data: { isPro: false, plan: 'free', subscriptionStatus: 'canceled', subscriptionCancelAtPeriodEnd: false },
+    });
+    if (done.count) await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: false, status: 'canceled', provider: user.paymentProvider, reason: 'paid period ended' } });
+  }
+  return due.length;
+};
 
 exports.runCleanup = async (now = new Date()) => {
   const ago = (days) => new Date(now.getTime() - days * DAY);
@@ -30,7 +56,9 @@ exports.runCleanup = async (now = new Date()) => {
     // Product analytics events are kept for 400 days (a full year plus slack).
     prisma.productEvent.deleteMany({ where: { createdAt: { lt: ago(400) } } }),
   ]);
+  const expiredSubscriptions = await exports.expireCancelledSubscriptions(now);
   return {
+    expiredSubscriptions,
     nativeExchangeCodes: nativeExchangeCodes.count,
     webhookEvents: webhookEvents.count,
     notifications: notifications.count,

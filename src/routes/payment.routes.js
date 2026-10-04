@@ -29,6 +29,22 @@ const changePlanLimiter = rateLimit({
 });
 router.post('/change-plan', auth, changePlanLimiter, changePlanRules, validate, PaymentController.changePlan);
 
+// Which gateway takes each currency (null = unavailable); cheap, no provider call.
+router.get('/options', auth, PaymentController.getOptions);
+
+// Razorpay subscribers: the app asks for the current state on return from paying (no redirect
+// back, and a webhook can be late), and cancels at the end of the period (no customer portal).
+// Both reach Razorpay, so they are capped like change-plan.
+const razorpayLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many attempts, try again later.' },
+});
+router.post('/sync', auth, razorpayLimiter, PaymentController.syncPayment);
+router.post('/cancel', auth, razorpayLimiter, PaymentController.cancelSubscription);
+
 // Manage billing: Stripe's hosted Customer Portal (needs a billing account).
 router.post('/portal', auth, PaymentController.createPortalSession);
 

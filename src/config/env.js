@@ -87,6 +87,40 @@ const config = {
       },
     },
   },
+  // Razorpay: takes INR payments (cards and UPI AutoPay) for subscribers in India, where
+  // Stripe is invite-only. Optional: with no keys, INR falls back to Stripe. Prices are the
+  // same STUDIO_/AGENCY_PRICE_*_INR_PAISE values above, so there is one place to change them.
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+    // Billing cycles a new subscription is created for (monthly, so 120 = ten years).
+    totalCount: parseInt(process.env.RAZORPAY_TOTAL_COUNT, 10) || 120,
+  },
+  // PayPal subscriptions, USD only (PayPal does not take INR in India). Optional. `mode` is
+  // 'sandbox' unless it is exactly 'live', so a missing or mistyped value can never charge real
+  // money. `webhookId` is the id PayPal shows for the webhook you add in its developer dashboard.
+  paypal: {
+    clientId: process.env.PAYPAL_CLIENT_ID || '',
+    clientSecret: process.env.PAYPAL_CLIENT_SECRET || '',
+    webhookId: process.env.PAYPAL_WEBHOOK_ID || '',
+    mode: process.env.PAYPAL_MODE === 'live' ? 'live' : 'sandbox',
+  },
+  // Cashfree subscriptions, INR only. Optional. `mode` is 'sandbox' unless exactly 'production'.
+  // Its webhooks are signed with the client secret, so there is no separate webhook secret.
+  cashfree: {
+    clientId: process.env.CASHFREE_CLIENT_ID || '',
+    clientSecret: process.env.CASHFREE_CLIENT_SECRET || '',
+    mode: process.env.CASHFREE_MODE === 'production' ? 'production' : 'sandbox',
+    apiVersion: process.env.CASHFREE_API_VERSION || '2025-01-01',
+    maxCycles: parseInt(process.env.CASHFREE_MAX_CYCLES, 10) || 120,
+  },
+  // Order in which the available gateways are offered per currency (first = preselected).
+  // Comma-separated ids; unknown or unconfigured ones are skipped.
+  paymentOrder: {
+    usd: (process.env.PAYMENT_PROVIDER_ORDER_USD || 'stripe,paypal').split(',').map((s) => s.trim()).filter(Boolean),
+    inr: (process.env.PAYMENT_PROVIDER_ORDER_INR || 'razorpay,cashfree,stripe').split(',').map((s) => s.trim()).filter(Boolean),
+  },
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',
     fromEmail: process.env.EMAIL_FROM || 'Clientglass <onboarding@resend.dev>',

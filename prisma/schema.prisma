@@ -112,6 +112,13 @@ model User {
   subscriptionStatus           String?   // Stripe's status: active, trialing, past_due, unpaid, canceled, …
   proPeriodEnd                 DateTime? // end of the paid period — "renews on" / "ends on"
   subscriptionCancelAtPeriodEnd Boolean  @default(false)
+  // Which gateway holds this subscription: 'stripe' or 'razorpay' (null = never subscribed,
+  // or a lifetime buyer). Razorpay's subscription id lives here, globally omitted from queries
+  // like Stripe's (config/prisma.js). The other state columns above are shared by both.
+  paymentProvider              String?
+  razorpaySubscriptionId       String?   @unique
+  paypalSubscriptionId         String?   @unique
+  cashfreeSubscriptionId       String?   @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -601,4 +608,20 @@ model Template {
   updatedAt   DateTime @updatedAt
 
   @@index([ownerId])
+}
+
+// A gateway-side plan (Razorpay needs one per amount, created ahead of the subscription),
+// remembered so a checkout reuses it instead of creating a new plan every time. The amount
+// is part of the key: changing a price in the environment makes a new plan and never edits
+// the one existing subscribers are already on.
+model ProviderPlan {
+  id             String   @id @default(cuid())
+  provider       String
+  plan           String
+  currency       String
+  amount         Int
+  providerPlanId String
+  createdAt      DateTime @default(now())
+
+  @@unique([provider, plan, currency, amount])
 }
