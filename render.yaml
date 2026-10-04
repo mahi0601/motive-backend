@@ -45,6 +45,16 @@ services:
       # (Developers → Webhooks → add endpoint https://<this-service>/api/payments/webhook).
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # Razorpay (INR, for buyers in India; Stripe is invite-only there). Optional: without
+      # them INR uses Stripe if configured. Use TEST keys (rzp_test_) until verified end to end.
+      # The webhook secret is chosen by you when adding the webhook in the Razorpay Dashboard
+      # (URL https://<this-service>/api/payments/razorpay/webhook); it is not the key secret.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
       # Per-MONTH amounts for each paid plan (Studio, Agency). PLACEHOLDERS until
       # checked with real buyers; keep the frontend's src/config/plans.js in step.
       - key: STUDIO_PRICE_USD_CENTS

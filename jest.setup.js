@@ -4,6 +4,11 @@
 // database. Point DATABASE_URL at a local/throwaway Postgres instead (CI does).
 // Set ALLOW_REMOTE_TEST_DB=1 only if you deliberately want to run against a
 // hosted database you are prepared to have test rows written to.
+// .env is loaded here, before the check: the app loads it later (config/env.js), so without this
+// the check below sees an empty DATABASE_URL and passes while the app goes on to use the hosted
+// database from .env. dotenv never overrides a variable that is already set, so a local
+// DATABASE_URL given on the command line still wins.
+require('dotenv').config({ quiet: true });
 const url = process.env.DATABASE_URL || '';
 if (/neon\.tech/i.test(url) && process.env.ALLOW_REMOTE_TEST_DB !== '1') {
   throw new Error(

@@ -5,6 +5,7 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
+const razorpay = require('./razorpay.service');
 const { PAID_PLANS, PLAN_NAMES, effectivePlan } = require('../utils/plans');
 
 // Lazily constructed — throws only when a payment route is actually hit without
@@ -35,8 +36,25 @@ const ACTIVE_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'];
 // object to keep in sync. The chosen plan rides along in the metadata of both
 // the session and the subscription, which is how the webhook knows what was
 // bought. With no plan given, the entry paid tier (Studio) is used.
+// Which gateway takes each currency. INR goes to Razorpay when it is configured (Stripe is
+// invite-only in India) and to Stripe otherwise; USD is Stripe. null = nothing can take it.
+// Also what the billing card asks, so it can say "unavailable" up front instead of failing
+// at the click.
+exports.providerFor = (currency) => {
+  const stripeReady = !!config.stripe.secretKey;
+  if (currency === 'inr') return razorpay.isConfigured() ? 'razorpay' : stripeReady ? 'stripe' : null;
+  return stripeReady ? 'stripe' : null;
+};
+exports.getOptions = () => ({ usd: exports.providerFor('usd'), inr: exports.providerFor('inr') });
+
 exports.createCheckoutSession = async (user, currency = 'usd', plan = 'studio') => {
   if (user.isPro) throw AppError.badRequest('Already upgraded to Pro');
+  const provider = exports.providerFor(currency);
+  if (!provider) throw new AppError('Payments are not available in this currency yet. Please try again later.', 503);
+  if (provider === 'razorpay') {
+    const { url } = await razorpay.createCheckout(user, plan);
+    return { url, provider };
+  }
 
   if (!PAID_PLANS.includes(plan)) throw AppError.badRequest(`Unsupported plan: ${plan}`);
   const pricing = config.stripe.plans[plan][currency];
@@ -83,7 +101,7 @@ exports.createCheckoutSession = async (user, currency = 'usd', plan = 'studio') 
   const idempotencyKey = crypto.createHash('sha256').update(JSON.stringify([params, window])).digest('hex');
   const session = await client.checkout.sessions.create(params, { idempotencyKey });
 
-  return { url: session.url };
+  return { url: session.url, provider: 'stripe' };
 };
 
 // Moves a Studio subscriber to Agency by repricing their EXISTING subscription
@@ -102,6 +120,11 @@ exports.changePlan = async (userId, plan) => {
 
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { stripeSubscriptionId: false } });
   if (!user) throw AppError.notFound('User not found');
+  // Razorpay cannot edit a UPI subscription, and a cancelled one cannot be reactivated, so
+  // this switch is not offered there. Said plainly rather than half-done.
+  if (user.paymentProvider === 'razorpay') {
+    throw AppError.badRequest('Switching plans is not available for this subscription yet. Cancel it at the end of the period and subscribe to Agency, or contact support.');
+  }
   const from = effectivePlan(user);
   if (from === 'free') throw AppError.badRequest('Subscribe to a plan first');
   if (from === 'agency') throw AppError.badRequest('You are already on Agency');
@@ -158,6 +181,7 @@ exports.changePlan = async (userId, plan) => {
 exports.createPortalSession = async (userId) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, omit: { stripeCustomerId: false } });
   if (!user) throw AppError.notFound('User not found');
+  if (user.paymentProvider === 'razorpay') throw AppError.badRequest('This subscription is managed here: use Cancel subscription.');
   if (!user.stripeCustomerId) throw AppError.badRequest('There is no billing account to manage');
 
   const client = getStripe();
@@ -254,6 +278,7 @@ const applySubscription = async (subscription, eventType, knownUserId) => {
     where: { id: user.id },
     data: {
       stripeSubscriptionId: subscription.id,
+      paymentProvider: 'stripe',
       subscriptionStatus: status,
       proPeriodEnd: periodEndOf(subscription),
       subscriptionCancelAtPeriodEnd: !ended && !!subscription.cancel_at_period_end,
@@ -297,6 +322,8 @@ const processEvent = async (event) => {
 // account rather than leave a subscription billing nobody. An already-gone
 // subscription (Stripe's resource_missing) counts as cancelled.
 exports.cancelSubscriptionForUser = async (userId) => {
+  const provider = await prisma.user.findUnique({ where: { id: userId }, select: { paymentProvider: true } });
+  if (provider?.paymentProvider === 'razorpay') return razorpay.cancelNow(userId);
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { stripeSubscriptionId: true, subscriptionStatus: true },

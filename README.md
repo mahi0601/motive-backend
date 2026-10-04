@@ -68,6 +68,7 @@ Set `ALLOW_REMOTE_TEST_DB=1` only if you deliberately want to run against a host
 | `DATABASE_URL` | Neon dashboard → Connect → **pooled** connection string |
 | `FRONTEND_URL` | The deployed frontend's real origin |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard — see Stripe below |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Razorpay Dashboard — optional, INR for buyers in India; see Razorpay below |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend dashboard — needs a verified sending domain |
 | `SENTRY_DSN` | A Sentry project (Node platform) |
 | `LOGTAIL_SOURCE_TOKEN` | Optional — a Better Stack (Logtail) source |
@@ -84,6 +85,16 @@ Set `ALLOW_REMOTE_TEST_DB=1` only if you deliberately want to run against a host
 4. Dashboard → Settings → Payment methods: enable whichever methods you want to accept. Checkout then offers those that are valid for a recurring payment in the buyer's currency.
 5. Dashboard → Settings → Billing → **Customer portal**: turn it on (and allow cancelling subscriptions). The app's "Manage billing" button opens it; it fails until it's enabled.
 6. Clientglass is a **monthly subscription** in two paid plans, **Studio** and **Agency** (plus Free), priced by active client — see `src/utils/plans.js` for the limits. Prices are inline, per plan and currency: `STUDIO_PRICE_USD_CENTS` / `STUDIO_PRICE_INR_PAISE` / `AGENCY_PRICE_USD_CENTS` / `AGENCY_PRICE_INR_PAISE` (monthly amounts; the defaults are placeholders). The buyer's plan travels in the checkout metadata and the webhook stores it on the user; only `usd`/`inr` are accepted. Keep the frontend's `src/config/plans.js` (what the pricing page shows) in step with whatever you charge. Everyone who was Pro before tiers or subscriptions is treated as Agency (the migration sets it, and `proLifetime` users stay Agency regardless of any subscription). A Studio subscriber moves to Agency in the app (`POST /api/payments/change-plan`): the existing subscription is repriced with proration, in its own currency, rather than a second checkout. Only that upgrade is offered; a downgrade is not (it needs a decision on clients over the new limit), and it is refused unless the subscription is active and not set to end.
+
+### Razorpay — INR for buyers in India (optional)
+
+Stripe is invite-only for new Indian accounts, so INR checkout can run on Razorpay. Leave the three `RAZORPAY_*` variables empty and INR uses Stripe if it is configured; USD always uses Stripe. `GET /api/payments/options` says which provider takes each currency, and the billing card says "unavailable" up front when neither does.
+
+1. Dashboard → Account & Settings → API keys: use **test** keys (`rzp_test_…`) until a payment works end to end, and put them in `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`. Test mode works before KYC is finished.
+2. Dashboard → Settings → Webhooks → add `https://<your-api-host>/api/payments/razorpay/webhook`, choose a secret yourself (it is **not** the key secret) and put it in `RAZORPAY_WEBHOOK_SECRET`. Subscribe it to `subscription.authenticated`, `activated`, `charged`, `pending`, `halted`, `cancelled`, `completed` and `updated`. The body is verified with an HMAC-SHA256 signature over the raw bytes (`X-Razorpay-Signature`) and each event is processed once (`X-Razorpay-Event-Id`).
+3. Plans are created on demand and remembered (`ProviderPlan`), one per plan and amount, from the same `*_PRICE_INR_PAISE` values. Changing a price makes a new plan and never edits one that existing subscribers are on.
+4. How it differs from Stripe, so support questions have answers: a Razorpay payment link has **no redirect back**, so after paying the app asks `POST /api/payments/sync` (and the webhook usually lands first); there is **no customer portal**, so a subscriber cancels in the app (`POST /api/payments/cancel`, at the end of the period, and a cancelled subscription cannot be resumed: they subscribe again); and there is **no in-app Studio to Agency switch** (a UPI subscription cannot be edited and Razorpay documents no proration), so that button is hidden and the card says to cancel at period end and subscribe to Agency, or contact support. Access follows the subscription: `active` and `pending` (a failed charge being retried) keep it on; `halted`, `cancelled`, `completed` and `expired` end it; `created` and `authenticated` grant nothing.
+5. Recurring card payments in India are subject to RBI rules and UPI AutoPay has a per-charge limit; which methods a buyer is offered depends on your Razorpay account activation and their bank. Do not promise a method in the UI that has not been tested in your account.
 
 ### Google OAuth
 
