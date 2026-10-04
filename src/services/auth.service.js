@@ -176,6 +176,8 @@ exports.loginWithGoogle = async (code, ctx) => {
         googleId: profile.id,
         avatar: profile.picture || '',
         emailVerifiedAt: new Date(),
+        // No sign-up checkbox on this path: ask once, in the app, before it is used.
+        termsPending: true,
       },
     });
     await analytics.track('signup', { userId: user.id });

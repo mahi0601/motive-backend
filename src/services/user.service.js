@@ -5,6 +5,7 @@ const paymentService = require('./payment.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
 const audit = require('./audit.service');
+const { TERMS_VERSION } = require('../config/legal');
 const { effectivePlan } = require('../utils/plans');
 
 // `hasPassword` tells the client which confirmation the delete-account flow
@@ -17,6 +18,22 @@ exports.getProfile = async (userId) => {
   // `tier` is what the account is entitled to right now (see utils/plans.js);
   // the raw `plan` column is only a record of the last purchase.
   return { ...safe, hasPassword: !!password, tier: effectivePlan(safe) };
+};
+
+// Records that the person agreed to the Terms and Privacy Policy (16 or older), for an
+// account that had no sign-up checkbox (a new Google account). The time and version are
+// set here, never taken from the caller, and an agreement already on record is not
+// rewritten, so the original time stays the evidence.
+exports.acceptTerms = async (userId) => {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { termsAcceptedAt: true } });
+  if (!user) throw AppError.notFound('User not found');
+  if (!user.termsAcceptedAt) {
+    await prisma.user.update({ where: { id: userId }, data: { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION, termsPending: false } });
+    await audit.record({ type: 'terms_accepted', actorId: userId, meta: { version: TERMS_VERSION } });
+  } else {
+    await prisma.user.update({ where: { id: userId }, data: { termsPending: false } });
+  }
+  return exports.getProfile(userId);
 };
 
 exports.updateProfile = async (userId, data) => {
