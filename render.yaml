@@ -10,7 +10,9 @@ services:
     # when you want it always-on for real-time + instant responses.
     plan: free
     region: oregon
-    buildCommand: npm ci && npx prisma migrate deploy
+    # Migrations go through Neon's direct host: the "-pooler" (PgBouncer) one can't hold the
+    # advisory lock `migrate deploy` takes, which makes the build hang or fail.
+    buildCommand: npm ci && DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/-pooler//')" npx prisma migrate deploy
     startCommand: node src/index.js
     healthCheckPath: /api/health
     autoDeploy: false # deploys are triggered by the GitHub Actions `deploy` job after CI passes
