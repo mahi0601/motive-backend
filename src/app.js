@@ -16,6 +16,7 @@ const { enabled: sentryEnabled, Sentry } = require('./config/sentry');
 const logger = require('./config/logger');
 const requestContext = require('./utils/requestContext');
 const errorHandler = require('./middlewares/error.middleware');
+const migrations = require('./utils/migrations');
 const paymentController = require('./controllers/payment.controller');
 const { DOWNLOAD_ONLY_EXTENSIONS } = require('./utils/fileTypes');
 const path = require('path');
@@ -158,9 +159,14 @@ app.get('/api/health', async (_req, res) => {
   } catch {
     dbUp = false;
   }
-  res.status(dbUp ? 200 : 503).json({
-    status: dbUp ? 'ok' : 'degraded',
+  // A database that has not had this code's migrations applied answers, but fails every real query
+  // (the sign-in first). Reporting that as unhealthy makes the host keep the previous version.
+  const pending = dbUp ? await migrations.pendingMigrations() : [];
+  const healthy = dbUp && pending.length === 0;
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : dbUp ? 'migrations_pending' : 'degraded',
     db: dbUp ? 'connected' : 'disconnected',
+    ...(pending.length ? { pendingMigrations: pending } : {}),
     uptime: process.uptime(),
   });
 });
