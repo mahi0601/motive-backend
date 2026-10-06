@@ -22,7 +22,7 @@ exports.list = async (userId, { workspaceId } = {}) => {
       defaultWs.id === workspaceId ? { OR: [{ workspaceId }, { ownerId: userId, workspaceId: null }] } : { workspaceId };
     return prisma.page.findMany({ where: { ...scope, archived: false }, orderBy: { position: 'asc' } });
   }
-  return prisma.page.findMany({ where: { ownerId: userId, archived: false }, orderBy: { position: 'asc' } });
+  return prisma.page.findMany({ where: { ...workspaceService.ownReachable(userId, 'ownerId'), archived: false }, orderBy: { position: 'asc' } });
 };
 
 // Role-aware access check, shared by getById/update/remove below. Returns
@@ -173,7 +173,7 @@ exports.search = async (term, userId) => {
   const query = term.trim();
 
   const accessible = {
-    OR: [{ ownerId: userId }, { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } }],
+    OR: [{ ownerId: userId, workspaceId: null }, { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } }],
   };
 
   const byTitle = await prisma.page.findMany({
@@ -194,7 +194,7 @@ exports.search = async (term, userId) => {
     LEFT JOIN "Workspace" w ON w.id = p."workspaceId"
     WHERE p.archived = false
       AND (
-        p."ownerId" = ${userId}
+        (p."workspaceId" IS NULL AND p."ownerId" = ${userId})
         OR w."ownerId" = ${userId}
         OR EXISTS (
           SELECT 1 FROM "WorkspaceMember" m

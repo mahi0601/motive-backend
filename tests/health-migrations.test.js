@@ -81,12 +81,14 @@ describe('GET /api/health', () => {
     expect(res.body.pendingMigrations).toBeUndefined();
   });
 
-  test('is 503 and names what is pending, so the host keeps the previous version', async () => {
+  test('is 503 and says how many are pending (not their names, the endpoint is public), so the host keeps the previous version', async () => {
     const spy = jest.spyOn(migrations, 'pendingMigrations').mockResolvedValue(['20260102_b']);
     const res = await request(app).get('/api/health');
     expect(spy).toHaveBeenCalled();
     expect(res.status).toBe(503);
-    expect(res.body).toMatchObject({ status: 'migrations_pending', db: 'connected', pendingMigrations: ['20260102_b'] });
+    expect(res.body).toMatchObject({ status: 'migrations_pending', db: 'connected', pendingMigrations: 1 });
+    expect(JSON.stringify(res.body)).not.toContain('20260102_b');
+    expect(res.body.uptime).toBeUndefined();
   });
 
   test('a database that is down is still "degraded", not "migrations pending"', async () => {

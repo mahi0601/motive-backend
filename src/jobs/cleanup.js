@@ -57,8 +57,11 @@ exports.runCleanup = async (now = new Date()) => {
     prisma.productEvent.deleteMany({ where: { createdAt: { lt: ago(400) } } }),
   ]);
   const expiredSubscriptions = await exports.expireCancelledSubscriptions(now);
+  // Loaded here, not at the top: payment.service pulls in the gateway SDKs.
+  const reconciledSubscriptions = await require('../services/payment.service').reconcileStaleSubscriptions({ now });
   return {
     expiredSubscriptions,
+    reconciledSubscriptions,
     nativeExchangeCodes: nativeExchangeCodes.count,
     webhookEvents: webhookEvents.count,
     notifications: notifications.count,

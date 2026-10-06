@@ -123,12 +123,19 @@ const credentialLimiter = rateLimit({
 // normalised, so ten wrong guesses at an account lock it for the window no matter
 // where they come from. The key is a hash: the address is never kept in memory
 // as a plain string key, and the 429 says nothing about whether the account exists.
+// Same normalisation the validator applies (Gmail dots and +tags fold into one account), so every
+// spelling of an address shares one counter.
+const normalizeEmail = require('validator/lib/normalizeEmail');
+const accountKey = (email) => {
+  const raw = String(email || '').trim();
+  return normalizeEmail(raw) || raw.toLowerCase();
+};
 const accountLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `login:${crypto.createHash('sha256').update(String(req.body?.email || '').trim().toLowerCase()).digest('hex')}`,
+  keyGenerator: (req) => `login:${crypto.createHash('sha256').update(accountKey(req.body?.email)).digest('hex')}`,
   skip: (req) => !req.body?.email, // validation rejects these anyway
   validate: { keyGeneratorIpFallback: false },
   message: { success: false, message: 'Too many attempts, try again later.' },
@@ -166,8 +173,8 @@ app.get('/api/health', async (_req, res) => {
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : dbUp ? 'migrations_pending' : 'degraded',
     db: dbUp ? 'connected' : 'disconnected',
-    ...(pending.length ? { pendingMigrations: pending } : {}),
-    uptime: process.uptime(),
+    // A count only: this is public, and names of migrations or the uptime tell a stranger nothing useful.
+    ...(pending.length ? { pendingMigrations: pending.length } : {}),
   });
 });
 app.get('/', (_req, res) => res.send('🚀 Clientglass API is up & running'));

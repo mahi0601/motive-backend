@@ -183,7 +183,18 @@ exports.handleWebhook = async (event, { eventId, rawBody } = {}) => {
   }
   try {
     if (String(event.event).startsWith('subscription.')) {
-      await applySubscription(event.payload?.subscription?.entity);
+      // Events can arrive out of order, so the live subscription is read again rather than trusting
+      // the (possibly older) copy in the event. If Razorpay cannot be reached the event's copy stands.
+      let entity = event.payload?.subscription?.entity;
+      if (entity?.id) {
+        try {
+          const live = await call('GET', `/subscriptions/${encodeURIComponent(entity.id)}`);
+          if (live?.id === entity.id && live.notes?.userId === entity.notes?.userId) entity = live;
+        } catch {
+          // keep the event's copy
+        }
+      }
+      await applySubscription(entity);
     }
   } catch (err) {
     await prisma.webhookEvent.deleteMany({ where: { stripeEventId: id } }).catch(() => {});

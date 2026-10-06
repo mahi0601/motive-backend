@@ -34,7 +34,7 @@ exports.getAll = async (userId, { skip, limit, workspaceId } = {}) => {
         ? { OR: [{ workspaceId }, { userId, workspaceId: null }] }
         : { workspaceId };
   } else {
-    where = { userId };
+    where = workspaceService.ownReachable(userId, 'userId');
   }
   const [items, total] = await Promise.all([
     prisma.task.findMany({ where, orderBy: { position: 'asc' }, skip, take: limit }),
@@ -73,7 +73,7 @@ exports.search = async (term, userId) => {
   if (!term || !term.trim()) return [];
   return prisma.task.findMany({
     where: {
-      OR: [{ userId }, { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } }],
+      OR: [{ userId, workspaceId: null }, { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } }],
       title: { contains: escapeLike(term.trim()), mode: 'insensitive' },
     },
     orderBy: { position: 'asc' },

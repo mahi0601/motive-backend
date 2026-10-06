@@ -8,16 +8,33 @@
 // version keeps serving. Set RUN_MIGRATIONS=false to skip it.
 const { spawnSync } = require('child_process');
 
+// Neon's direct host is the pooled one without "-pooler"; PgBouncer-only query parameters go too.
+const directUrl = (url) =>
+  url
+    .replace(/-pooler/g, '')
+    .replace(/([?&])pgbouncer=[^&]*&?/, '$1')
+    .replace(/[?&]$/, '');
 module.exports = function applyMigrations() {
   if (process.env.NODE_ENV !== 'production' || process.env.RUN_MIGRATIONS === 'false') return;
   const url = process.env.DATABASE_URL;
   if (!url) return;
   const res = spawnSync('npx', ['prisma', 'migrate', 'deploy'], {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: url.replace('-pooler', '') },
+    env: { ...process.env, DATABASE_URL: directUrl(url) },
   });
   if (res.status !== 0) {
-    console.error('prisma migrate deploy failed; refusing to start against an unmigrated database.');
-    process.exit(1);
+    // The logger reaches Sentry; flush briefly so the report is sent before the process exits.
+    const logger = require('../config/logger');
+    logger.error(
+      'prisma migrate deploy failed; refusing to start against an unmigrated database.',
+      {
+        status: res.status,
+        signal: res.signal,
+        error: res.error && res.error.message,
+      },
+    );
+    setTimeout(() => process.exit(1), 500);
+    return;
   }
 };
+module.exports.directUrl = directUrl;
