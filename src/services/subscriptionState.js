@@ -38,9 +38,25 @@ exports.applyGatewayState = async ({ provider, idColumn, id, userHint, state, ca
   });
   if (!user) return null; // not one of ours, or the account is gone
 
-  // Matched only by the hint, and the buyer already pays through a different live subscription:
-  // this is a second one (a double-click that both got paid). Cancel it rather than bill twice.
-  if (user[idColumn] && user[idColumn] !== id && PAYING.includes(user.subscriptionStatus)) {
+  // Another subscription is the one on file (same gateway, a different id), or the buyer pays
+  // through a different gateway right now. This id is not the live one.
+  const otherSameGateway = !!user[idColumn] && user[idColumn] !== id;
+  const otherGatewayLive =
+    !!user.paymentProvider &&
+    user.paymentProvider !== provider &&
+    PAYING.includes(user.subscriptionStatus);
+
+  // A late event about a subscription that is over (or an older one) must never overwrite the one
+  // that is billing now: it would switch off a paying buyer and forget the live subscription id.
+  if (state.ended && !state.paid && (otherSameGateway || otherGatewayLive))
+    return user.id;
+
+  // The buyer already pays through a different live subscription: this is a second one (a
+  // double-click that both got paid, or two gateways). Cancel it rather than bill twice.
+  if (
+    (otherSameGateway && PAYING.includes(user.subscriptionStatus)) ||
+    otherGatewayLive
+  ) {
     if ((state.paid || state.inFlight) && cancelDuplicate) {
       try {
         await cancelDuplicate(id);

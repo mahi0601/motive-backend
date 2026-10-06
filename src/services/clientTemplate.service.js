@@ -7,6 +7,7 @@ const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
 const workspaceService = require('./workspace.service');
 const copy = require('./workspaceCopy.service');
+const withLock = require('../utils/advisoryLock');
 
 const MAX_TEMPLATES = 20;
 const MAX_SNAPSHOT_BYTES = 2_000_000;
@@ -24,7 +25,24 @@ exports.save = async (ownerId, { workspaceId, name, description = '' }) => {
     throw new AppError('This client is too large to save as a template. Leave out long pages or archive some first.', 422);
   }
 
-  const row = await prisma.clientTemplate.create({ data: { ownerId, name: String(name).trim(), description: String(description).trim(), snapshot } });
+  // Counted again under a per-owner lock (the snapshot above is slow, so parallel saves overlap).
+  const row = await withLock(`templates:${ownerId}`, async (tx) => {
+    if (
+      (await tx.clientTemplate.count({ where: { ownerId } })) >= MAX_TEMPLATES
+    ) {
+      throw AppError.conflict(
+        `You can keep up to ${MAX_TEMPLATES} client templates. Delete one to save another.`,
+      );
+    }
+    return tx.clientTemplate.create({
+      data: {
+        ownerId,
+        name: String(name).trim(),
+        description: String(description).trim(),
+        snapshot,
+      },
+    });
+  });
   const counts = countsOf(snapshot);
   await audit.record({ type: 'client_template_saved', actorId: ownerId, meta: counts });
   return present(row);

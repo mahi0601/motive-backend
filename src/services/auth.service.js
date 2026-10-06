@@ -333,13 +333,15 @@ exports.forgotPassword = async (email) => {
 
   const token = signResetToken(user.id, user.tokenVersion);
   const resetUrl = `${config.frontendUrl}/reset-password?token=${token}`;
-  await emailService.sendEmail({
+  // Not awaited: waiting for the mail provider only for real accounts would let the response time
+  // reveal which addresses are registered. A failure is logged, and the person can ask again.
+  emailService.sendEmail({
     to: user.email,
     subject: 'Reset your Clientglass password',
     html: `<p>Someone requested a password reset for your Clientglass account.</p>
 <p><a href="${resetUrl}">Click here to set a new password</a>. This link expires in 30 minutes.</p>
 <p>If you didn't request this, you can safely ignore this email.</p>`,
-  });
+  }).catch((err) => logger.warn('Password reset email failed', { error: err.message }));
 };
 
 exports.resetPassword = async (token, newPassword) => {

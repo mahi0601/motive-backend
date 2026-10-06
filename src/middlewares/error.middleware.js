@@ -1,5 +1,4 @@
 const AppError = require('../utils/AppError');
-const config = require('../config/env');
 const logger = require('../config/logger');
 
 // Translate well-known library errors into clean, client-safe responses.
@@ -63,8 +62,9 @@ const errorHandler = (err, _req, res, _next) => {
   res.status(statusCode).json({
     success: false,
     message: isOperational ? normalized.message : 'Internal server error',
-    // Surface stack only outside production to aid debugging.
-    ...(config.isProd ? {} : { stack: err.stack }),
+    // Stack traces only when developing or testing: a staging or preview deploy with some other
+    // NODE_ENV must not hand them to callers either.
+    ...(['development', 'test'].includes(process.env.NODE_ENV) ? { stack: err.stack } : {}),
   });
 };
 

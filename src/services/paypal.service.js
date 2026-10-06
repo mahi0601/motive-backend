@@ -274,16 +274,19 @@ exports.cancelAtPeriodEnd = async (userId) => {
   } catch {
     // The date already stored is used; cancelling must not depend on this read.
   }
+  // The flag is written BEFORE the gateway is told, so a cancelled webhook that lands in between
+  // already sees "the buyer cancelled" and keeps access to the end of the period they paid for.
+  await prisma.user.update({ where: { id: userId }, data: { subscriptionCancelAtPeriodEnd: true, proPeriodEnd: periodEnd ?? new Date() } });
   try {
     await cancelOnPaypal(user.paypalSubscriptionId);
   } catch (err) {
+    await prisma.user.update({ where: { id: userId }, data: { subscriptionCancelAtPeriodEnd: user.subscriptionCancelAtPeriodEnd, proPeriodEnd: user.proPeriodEnd } }).catch(() => {});
     if (err.paypalStatus === 422 || err.paypalStatus === 404) {
       await exports.sync(userId).catch(() => {});
       throw AppError.badRequest('This subscription can no longer be cancelled here. Reload to see its current state, or contact support.');
     }
     throw err;
   }
-  await prisma.user.update({ where: { id: userId }, data: { subscriptionCancelAtPeriodEnd: true, proPeriodEnd: periodEnd ?? new Date() } });
   await audit.record({ type: 'subscription_cancel_requested', targetUserId: userId, meta: { provider: 'paypal' } });
   return { cancelAtPeriodEnd: true };
 };

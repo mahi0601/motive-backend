@@ -38,6 +38,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-8080}/api/health" || exit 1
 
-# Applies pending migrations before the app starts: this image has no separate
-# release/build step like Render's.
-CMD ["sh", "-c", "npx prisma migrate deploy && node src/index.js"]
+# Pending migrations are applied by src/index.js (utils/applyMigrations.js) before the server
+# listens: it runs through Neon's direct host, which `migrate deploy` needs. Running it here too
+# would use the raw (pooled) DATABASE_URL and fail, so the container just starts the app.
+CMD ["node", "src/index.js"]
