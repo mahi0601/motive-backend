@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const builtins = require('../data/builtinTemplates');
 const pageService = require('./page.service');
 const AppError = require('../utils/AppError');
+const workspaceService = require('./workspace.service');
 
 // A lightweight block-type sequence for the card thumbnail preview.
 const previewOf = (blocks = []) => blocks.slice(0, 7).map((b) => b.type);
@@ -74,7 +75,8 @@ exports.use = async (templateId, userId, { parentId, workspaceId } = {}) => {
 
 // Save an existing page's blocks as a reusable custom template.
 exports.saveFromPage = async (userId, { pageId, name, icon, description }) => {
-  const page = await prisma.page.findFirst({ where: { id: pageId, ownerId: userId } });
+  // Only a page the caller can still reach, so a removed member cannot copy a client's current content.
+  const page = await prisma.page.findFirst({ where: { id: pageId, ...workspaceService.ownReachable(userId, 'ownerId') } });
   if (!page) throw AppError.notFound('Page not found');
 
   const blocks = await prisma.block.findMany({ where: { pageId }, orderBy: { position: 'asc' } });

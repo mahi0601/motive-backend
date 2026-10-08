@@ -4,6 +4,7 @@ const auth = require('../middlewares/auth.middleware');
 const AuthController = require('../controllers/auth.controller');
 const validate = require('../middlewares/validate.middleware');
 const sameSite = require('../middlewares/sameSite.middleware');
+const jsonOnly = require('../middlewares/jsonOnly.middleware');
 const {
   registerRules,
   loginRules,
@@ -12,8 +13,8 @@ const {
   verifyEmailRules,
 } = require('../validators/auth.validator');
 
-router.post('/register', registerRules, validate, AuthController.register);
-router.post('/login', loginRules, validate, AuthController.login);
+router.post('/register', jsonOnly, registerRules, validate, AuthController.register);
+router.post('/login', jsonOnly, loginRules, validate, AuthController.login);
 router.post('/refresh', sameSite, AuthController.refresh); // uses httpOnly cookie, no body
 router.post('/logout', sameSite, AuthController.logout);
 // Rate-limited alongside login/register in server.js — same brute-force/abuse surface.
@@ -38,6 +39,6 @@ router.get('/google/callback', AuthController.googleCallback);
 
 // Native (Capacitor Android) hand-off — see auth.controller.js#nativeExchange.
 // Rate-limited alongside login/register/etc. in server.js.
-router.post('/native-exchange', AuthController.nativeExchange);
+router.post('/native-exchange', jsonOnly, AuthController.nativeExchange);
 
 module.exports = router;

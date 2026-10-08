@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const Stripe = require('stripe');
 const config = require('../config/env');
+const logger = require('../config/logger');
 const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
@@ -265,13 +266,65 @@ const applyPaidCheckoutSession = async (session, userId) => {
 // whose (accidental) subscription ends stays Pro.
 const applySubscription = async (subscription, eventType, knownUserId) => {
   const userId = knownUserId || subscription.metadata?.userId;
-  const where = userId ? { id: userId } : { stripeSubscriptionId: subscription.id };
-  const user = await prisma.user.findFirst({ where, select: { id: true, proLifetime: true, isPro: true } });
+  const where = userId
+    ? { id: userId }
+    : { stripeSubscriptionId: subscription.id };
+  const user = await prisma.user.findFirst({
+    where,
+    select: {
+      id: true,
+      proLifetime: true,
+      isPro: true,
+      stripeSubscriptionId: true,
+      paymentProvider: true,
+      subscriptionStatus: true,
+    },
+  });
   if (!user) return; // not one of ours (or already deleted) — nothing to update
 
-  const ended = eventType === 'customer.subscription.deleted' || subscription.status === 'canceled';
+  const ended =
+    eventType === 'customer.subscription.deleted' ||
+    subscription.status === 'canceled';
+
+  // A different subscription is the one on file, or the buyer pays through another gateway: this
+  // event is about one that is not the live subscription.
+  const stripeOther =
+    !!user.stripeSubscriptionId &&
+    user.stripeSubscriptionId !== subscription.id;
+  const payingNow = ['active', 'past_due'].includes(user.subscriptionStatus);
+  const elsewhereLive =
+    !!user.paymentProvider && user.paymentProvider !== 'stripe' && payingNow;
+  if (stripeOther || elsewhereLive) {
+    // A late event for an old/ended subscription must not switch off, or overwrite, the live one.
+    if (ended) return;
+    if (
+      (stripeOther && user.paymentProvider === 'stripe' && payingNow) ||
+      elsewhereLive
+    ) {
+      // A second live subscription for someone already paying: cancel it rather than bill twice.
+      if (ACTIVE_SUBSCRIPTION_STATUSES.includes(subscription.status)) {
+        try {
+          await getStripe().subscriptions.cancel(subscription.id);
+          await audit.record({
+            type: 'duplicate_subscription_cancelled',
+            targetUserId: user.id,
+            meta: { provider: 'stripe' },
+          });
+        } catch {
+          logger.error('Could not cancel a duplicate subscription', {
+            userId: user.id,
+            provider: 'stripe',
+          });
+        }
+      }
+      return;
+    }
+  }
+
   const status = ended ? 'canceled' : subscription.status;
-  const nextIsPro = user.proLifetime || (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status));
+  const nextIsPro =
+    user.proLifetime ||
+    (!ended && ACTIVE_SUBSCRIPTION_STATUSES.includes(status));
   if (nextIsPro !== user.isPro) {
     await audit.record({ type: 'plan_changed', targetUserId: user.id, meta: { isPro: nextIsPro, status } });
     if (nextIsPro) await analytics.track('upgraded', { userId: user.id });
@@ -302,7 +355,15 @@ const processEvent = async (event) => {
   }
 
   if (SUBSCRIPTION_EVENT_TYPES.includes(event.type)) {
-    await applySubscription(event.data.object, event.type);
+    // Stripe does not deliver events in order, so a late one can describe a state that has since
+    // changed. The subscription is read again so the CURRENT state is applied, never the event's.
+    let subscription = event.data.object;
+    try {
+      if (config.stripe.secretKey) subscription = (await getStripe().subscriptions.retrieve(subscription.id)) || subscription;
+    } catch (err) {
+      if (err?.code !== 'resource_missing') throw err; // gone: the event's own copy is all there is
+    }
+    await applySubscription(subscription, event.type);
     return;
   }
 
@@ -343,6 +404,54 @@ exports.syncForUser = async (userId) => {
   if (gateway?.sync) return gateway.sync(userId);
   const row = await prisma.user.findUnique({ where: { id: userId }, select: { isPro: true, subscriptionStatus: true } });
   return { isPro: !!row?.isPro, status: row?.subscriptionStatus ?? null };
+};
+
+// Asks the gateway for the truth about one user's subscription and applies it. Used by the periodic
+// reconciliation below: Stripe is read by subscription id (its events are the only other source).
+const reconcileUser = async (userId) => {
+  const gateway = await exports.gatewayForUser(userId);
+  if (gateway?.sync) return gateway.sync(userId);
+  if (!config.stripe.secretKey) return null;
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { stripeSubscriptionId: true } });
+  if (!row?.stripeSubscriptionId) return null;
+  let subscription;
+  try {
+    subscription = await getStripe().subscriptions.retrieve(row.stripeSubscriptionId);
+  } catch (err) {
+    if (err?.code !== 'resource_missing') throw err;
+    subscription = { id: row.stripeSubscriptionId, status: 'canceled', metadata: { userId } };
+  }
+  await applySubscription(subscription, 'reconcile', userId);
+  return true;
+};
+
+// Safety net for a lost webhook (a cancel or a halt that never arrived): anyone still marked as paying
+// whose paid period ended more than `graceDays` ago is checked against their gateway, which corrects
+// them. A healthy subscriber's period end moves forward on every renewal, so they are never listed.
+// Bounded per run; one failure does not stop the rest.
+exports.reconcileStaleSubscriptions = async ({ now = new Date(), graceDays = 3, limit = 50 } = {}) => {
+  const stale = await prisma.user.findMany({
+    where: {
+      isPro: true,
+      proLifetime: false,
+      paymentProvider: { not: null },
+      subscriptionCancelAtPeriodEnd: false,
+      subscriptionStatus: { in: ['active', 'past_due', 'trialing'] },
+      proPeriodEnd: { lt: new Date(now.getTime() - graceDays * 24 * 60 * 60 * 1000) },
+    },
+    select: { id: true },
+    take: limit,
+  });
+  let checked = 0;
+  for (const { id } of stale) {
+    try {
+      await reconcileUser(id);
+      checked += 1;
+    } catch (err) {
+      logger.warn('Subscription reconciliation failed for one user', { userId: id, error: err.message });
+    }
+  }
+  return checked;
 };
 
 // The in-app Cancel button, for gateways without a hosted billing page.

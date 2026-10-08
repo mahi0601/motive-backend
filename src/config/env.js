@@ -23,6 +23,18 @@ if (!isLocal && process.env.JWT_REFRESH_SECRET && process.env.JWT_REFRESH_SECRET
   process.exit(1);
 }
 
+// A price from the environment, in the smallest currency unit. Unset means the placeholder default;
+// a set-but-malformed value ("19.00", "0", "abc") throws at boot instead of silently charging a wrong amount.
+const priceEnv = (name, fallback) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^[1-9]\d*$/.test(raw.trim()))
+    throw new Error(
+      `${name} must be a positive whole number (smallest currency unit), got '${raw}'`,
+    );
+  return parseInt(raw, 10);
+};
+
 const config = {
   env: process.env.NODE_ENV || 'development',
   isProd: process.env.NODE_ENV === 'production',
@@ -78,12 +90,18 @@ const config = {
     // (what the pricing page displays) in step with whatever is charged here.
     plans: {
       studio: {
-        usd: { amount: parseInt(process.env.STUDIO_PRICE_USD_CENTS, 10) || 1900, label: '$19' },
-        inr: { amount: parseInt(process.env.STUDIO_PRICE_INR_PAISE, 10) || 99900, label: '₹999' },
+        usd: { amount: priceEnv('STUDIO_PRICE_USD_CENTS', 1900), label: '$19' },
+        inr: {
+          amount: priceEnv('STUDIO_PRICE_INR_PAISE', 99900),
+          label: '₹999',
+        },
       },
       agency: {
-        usd: { amount: parseInt(process.env.AGENCY_PRICE_USD_CENTS, 10) || 4900, label: '$49' },
-        inr: { amount: parseInt(process.env.AGENCY_PRICE_INR_PAISE, 10) || 249900, label: '₹2,499' },
+        usd: { amount: priceEnv('AGENCY_PRICE_USD_CENTS', 4900), label: '$49' },
+        inr: {
+          amount: priceEnv('AGENCY_PRICE_INR_PAISE', 249900),
+          label: '₹2,499',
+        },
       },
     },
   },
@@ -187,6 +205,30 @@ const logger = require('./logger');
 // (see payment.service.js), so the rest of the app still boots without Stripe configured.
 if (config.isProd && (!config.stripe.secretKey || !config.stripe.webhookSecret)) {
   logger.warn('STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET not set — payment endpoints will fail.');
+}
+
+const PRICE_VARS = [
+  'STUDIO_PRICE_USD_CENTS',
+  'STUDIO_PRICE_INR_PAISE',
+  'AGENCY_PRICE_USD_CENTS',
+  'AGENCY_PRICE_INR_PAISE',
+];
+if (config.isProd && PRICE_VARS.some((n) => !process.env[n])) {
+  logger.warn(
+    'Plan price env vars are unset, so PLACEHOLDER prices will be charged. Set: ' +
+      PRICE_VARS.filter((n) => !process.env[n]).join(', '),
+  );
+}
+// A gateway with API keys but no webhook secret takes checkouts it can never confirm by webhook.
+if (config.isProd && config.razorpay.keyId && !config.razorpay.webhookSecret) {
+  logger.warn(
+    'RAZORPAY_KEY_ID is set but RAZORPAY_WEBHOOK_SECRET is not — Razorpay webhooks will be rejected.',
+  );
+}
+if (config.isProd && !process.env.FRONTEND_URL) {
+  logger.warn(
+    'FRONTEND_URL not set — checkout return links and emails will point at localhost.',
+  );
 }
 
 // Same opt-in pattern — password-reset emails just silently no-op without it

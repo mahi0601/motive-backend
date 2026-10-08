@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const { comparePassword } = require('../utils/password.util');
 const paymentService = require('./payment.service');
+const workspaceService = require('./workspace.service');
 const storageService = require('./storage.service');
 const logger = require('../config/logger');
 const audit = require('./audit.service');
@@ -68,12 +69,49 @@ exports.exportData = async (userId) => {
         },
       },
     }),
-    prisma.task.findMany({ where: { userId }, include: { subtasks: true }, orderBy: { createdAt: 'asc' } }),
-    prisma.page.findMany({ where: { ownerId: userId }, include: { blocks: { orderBy: { position: 'asc' } } }, orderBy: { createdAt: 'asc' } }),
-    prisma.comment.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
-    prisma.file.findMany({ where: { uploadedBy: userId }, select: { id: true, name: true, url: true, taskId: true, createdAt: true } }),
-    prisma.notification.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
-    prisma.activityLog.findMany({ where: { userId }, orderBy: { timestamp: 'asc' } }),
+    // What they created is exported, but the CURRENT content of a workspace they no longer belong to
+    // (other people's subtasks and blocks) is not: those rows come without it.
+    prisma.task.findMany({
+      where: { userId },
+      include: {
+        subtasks: {
+          where: { task: workspaceService.ownReachable(userId, 'userId') },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.page.findMany({
+      where: { ownerId: userId },
+      include: {
+        blocks: {
+          where: { page: workspaceService.ownReachable(userId, 'ownerId') },
+          orderBy: { position: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.comment.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.file.findMany({
+      where: { uploadedBy: userId },
+      select: {
+        id: true,
+        name: true,
+        url: true,
+        taskId: true,
+        createdAt: true,
+      },
+    }),
+    prisma.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.activityLog.findMany({
+      where: { userId },
+      orderBy: { timestamp: 'asc' },
+    }),
     prisma.template.findMany({ where: { ownerId: userId } }),
     // What clients sent through the status pages of workspaces this user owns.
     prisma.clientFeedback.findMany({
@@ -166,6 +204,30 @@ exports.deleteAccount = async (userId, password, confirmEmail) => {
   // to orphan. 3) Delete the rows. 4) Only then remove the objects, best effort:
   // the rows are already gone, so a storage hiccup must not fail the request.
   await paymentService.cancelSubscriptionForUser(userId);
+
+  // Work this person did inside someone ELSE's workspace belongs to that workspace: the cascade
+  // would delete a client's tasks, pages and uploads along with the member who made them. Hand them
+  // to the workspace owner first. (Comments are personal words, so they are still deleted with them.)
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { userId, workspace: { ownerId: { not: userId } } },
+    select: { workspaceId: true, workspace: { select: { ownerId: true } } },
+  });
+  await prisma.$transaction(
+    memberships.flatMap(({ workspaceId, workspace }) => [
+      prisma.task.updateMany({
+        where: { userId, workspaceId },
+        data: { userId: workspace.ownerId },
+      }),
+      prisma.page.updateMany({
+        where: { ownerId: userId, workspaceId },
+        data: { ownerId: workspace.ownerId },
+      }),
+      prisma.file.updateMany({
+        where: { uploadedBy: userId, task: { workspaceId } },
+        data: { uploadedBy: workspace.ownerId },
+      }),
+    ]),
+  );
 
   const files = await prisma.file.findMany({
     where: { OR: [{ uploadedBy: userId }, { task: { userId } }, { task: { workspace: { ownerId: userId } } }] },

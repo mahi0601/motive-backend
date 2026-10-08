@@ -1,13 +1,19 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const { shareWhere } = require('../utils/shareToken');
+const withLock = require('../utils/advisoryLock');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
 const AppError = require('../utils/AppError');
 const emailService = require('./email.service');
 const config = require('../config/env');
 const logger = require('../config/logger');
-const { PLAN_LIMITS, PLAN_NAMES, NEXT_PLAN, effectivePlan } = require('../utils/plans');
+const {
+  PLAN_LIMITS,
+  PLAN_NAMES,
+  NEXT_PLAN,
+  effectivePlan,
+} = require('../utils/plans');
 
 // Team size per workspace and the number of active clients depend on the owner's
 // plan — see utils/plans.js (Free: 2 members, 1 client; Studio: 5 and 10; Agency:
@@ -126,16 +132,30 @@ exports.listForUser = async (userId) => {
   });
 
   if (workspaces.length === 0) {
-    const ws = await prisma.workspace.create({
-      data: {
-        name: 'My Workspace',
-        ownerId: userId,
-        members: { create: [{ userId, role: 'owner' }] },
+    // Parallel first requests from a new user must create ONE default workspace, not one each.
+    const include = {
+      members: {
+        include: { user: { select: { id: true, name: true, email: true } } },
       },
-      include: {
-        members: { include: { user: { select: { id: true, name: true, email: true } } } },
-        milestones: MILESTONES_INCLUDE,
-      },
+      milestones: MILESTONES_INCLUDE,
+    };
+    const ws = await withLock(`default-workspace:${userId}`, async (tx) => {
+      const existing = await tx.workspace.findFirst({
+        where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        include,
+        orderBy: { createdAt: 'asc' },
+      });
+      return (
+        existing ||
+        tx.workspace.create({
+          data: {
+            name: 'My Workspace',
+            ownerId: userId,
+            members: { create: [{ userId, role: 'owner' }] },
+          },
+          include,
+        })
+      );
     });
     workspaces = [ws];
   }
@@ -202,7 +222,28 @@ exports.canAccess = async (workspaceId, userId, need = 'read') => {
 // (never a 403) with `notFoundMessage`, so a non-member can't tell a resource
 // they can't reach from one that doesn't exist. `resource` is any row with
 // `{ ownerId | userId, workspaceId }`.
-exports.assertResourceAccess = async (resource, userId, need, notFoundMessage) => {
+// Prisma `where` for "things this person created that they can still reach": personal items (no
+// workspace), or items in a workspace they still belong to. Authorship alone is not access, so
+// someone removed from a workspace stops seeing what they created there in lists, search, exports
+// and digests, the same rule assertResourceAccess applies to a single item.
+exports.ownReachable = (userId, creatorField) => ({
+  [creatorField]: userId,
+  OR: [
+    { workspaceId: null },
+    {
+      workspace: {
+        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      },
+    },
+  ],
+});
+
+exports.assertResourceAccess = async (
+  resource,
+  userId,
+  need,
+  notFoundMessage,
+) => {
   const creatorId = 'ownerId' in resource ? resource.ownerId : resource.userId;
   // Personal items (no workspace) always belong to their creator. In a
   // workspace, authorship is not access: someone removed from it must not keep
@@ -231,37 +272,16 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   const ws = await assertOwner(workspaceId, requesterId);
   const normalizedEmail = email.toLowerCase();
 
-  const requester = await prisma.user.findUnique({
-    where: { id: requesterId },
-    select: { name: true, isPro: true, proLifetime: true, plan: true, emailVerifiedAt: true },
+  const requester = await assertMayEmailInvites(requesterId, {
+    isPro: true,
+    proLifetime: true,
+    plan: true,
   });
-  // Invites send email from Clientglass's address to arbitrary people, so they are
-  // the thing a throwaway account would abuse; require a proven address first.
-  if (!requester.emailVerifiedAt) {
-    throw AppError.forbidden('Verify your email address before inviting people — check your inbox for the confirmation link.');
-  }
-  const sentToday = await prisma.workspaceInvite.count({
-    where: { invitedById: requesterId, updatedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
-  });
-  if (sentToday >= DAILY_INVITE_LIMIT) {
-    throw new AppError('You have reached the daily invite limit — try again tomorrow.', 429);
-  }
-  {
-    const plan = effectivePlan(requester);
-    // Pending invites hold a seat too, or a workspace could queue up any
-    // number of invites and only hit the limit as they are accepted.
-    const [memberCount, pendingElsewhere] = await Promise.all([
-      prisma.workspaceMember.count({ where: { workspaceId } }),
-      prisma.workspaceInvite.count({
-        where: { workspaceId, status: 'pending', expiresAt: { gt: new Date() }, email: { not: normalizedEmail } },
-      }),
-    ]);
-    if (memberCount + pendingElsewhere >= PLAN_LIMITS[plan].members) {
-      throw AppError.paymentRequired(memberLimitMessage(plan));
-    }
-  }
 
-  const existingMember = await prisma.user.findUnique({ where: { email: normalizedEmail }, select: { id: true } });
+  const existingMember = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+    select: { id: true },
+  });
   if (existingMember) {
     const already = await prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId, userId: existingMember.id } },
@@ -270,29 +290,76 @@ exports.createInvite = async (workspaceId, requesterId, email, role = 'editor') 
   }
 
   const { raw, tokenHash } = newInviteToken();
-  const invite = await prisma.workspaceInvite.upsert({
-    where: { workspaceId_email: { workspaceId, email: normalizedEmail } },
-    create: {
-      workspaceId,
-      email: normalizedEmail,
-      role,
-      tokenHash,
-      status: 'pending',
-      invitedById: requesterId,
-      expiresAt: new Date(Date.now() + INVITE_TTL_MS),
-    },
-    update: {
-      role,
-      tokenHash,
-      status: 'pending',
-      invitedById: requesterId,
-      expiresAt: new Date(Date.now() + INVITE_TTL_MS),
-    },
+  // The seat check and the write share one lock per workspace, so parallel invites cannot overshoot.
+  const invite = await withLock(`members:${workspaceId}`, async (tx) => {
+    const plan = effectivePlan(requester);
+    // Pending invites hold a seat too, or a workspace could queue up any
+    // number of invites and only hit the limit as they are accepted.
+    const [memberCount, pendingElsewhere] = await Promise.all([
+      tx.workspaceMember.count({ where: { workspaceId } }),
+      tx.workspaceInvite.count({
+        where: {
+          workspaceId,
+          status: 'pending',
+          expiresAt: { gt: new Date() },
+          email: { not: normalizedEmail },
+        },
+      }),
+    ]);
+    if (memberCount + pendingElsewhere >= PLAN_LIMITS[plan].members) {
+      throw AppError.paymentRequired(memberLimitMessage(plan));
+    }
+    return tx.workspaceInvite.upsert({
+      where: { workspaceId_email: { workspaceId, email: normalizedEmail } },
+      create: {
+        workspaceId,
+        email: normalizedEmail,
+        role,
+        tokenHash,
+        status: 'pending',
+        invitedById: requesterId,
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+      },
+      update: {
+        role,
+        tokenHash,
+        status: 'pending',
+        invitedById: requesterId,
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+      },
+    });
   });
 
   await sendInviteEmail(invite, ws, requester.name, raw);
   await audit.record({ type: 'invite_created', actorId: requesterId, workspaceId, meta: { role } });
   return safeInviteFields(invite);
+};
+
+// Invites (and resends) send email from Clientglass's address to arbitrary people, so they are the
+// thing a throwaway account would abuse: a proven address first, and a daily cap per sender.
+const assertMayEmailInvites = async (requesterId, extraSelect = {}) => {
+  const requester = await prisma.user.findUnique({
+    where: { id: requesterId },
+    select: { name: true, emailVerifiedAt: true, ...extraSelect },
+  });
+  if (!requester.emailVerifiedAt) {
+    throw AppError.forbidden(
+      'Verify your email address before inviting people — check your inbox for the confirmation link.',
+    );
+  }
+  const sentToday = await prisma.workspaceInvite.count({
+    where: {
+      invitedById: requesterId,
+      updatedAt: { gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+  });
+  if (sentToday >= DAILY_INVITE_LIMIT) {
+    throw new AppError(
+      'You have reached the daily invite limit — try again tomorrow.',
+      429,
+    );
+  }
+  return requester;
 };
 
 exports.listInvites = async (workspaceId, requesterId) => {
@@ -306,9 +373,16 @@ exports.listInvites = async (workspaceId, requesterId) => {
 
 exports.resendInvite = async (workspaceId, inviteId, requesterId) => {
   const ws = await assertOwner(workspaceId, requesterId);
-  const requester = await prisma.user.findUnique({ where: { id: requesterId }, select: { name: true } });
-  const existing = await prisma.workspaceInvite.findFirst({ where: { id: inviteId, workspaceId } });
+  const existing = await prisma.workspaceInvite.findFirst({
+    where: { id: inviteId, workspaceId },
+  });
   if (!existing) throw AppError.notFound('Invite not found');
+  // A revoked or declined invite stays that way: bringing it back would email someone who said no.
+  if (existing.status !== 'pending')
+    throw AppError.badRequest(
+      'That invite is no longer open. Send a new invite instead.',
+    );
+  const requester = await assertMayEmailInvites(requesterId);
 
   const { raw, tokenHash } = newInviteToken();
   const invite = await prisma.workspaceInvite.update({
@@ -390,12 +464,27 @@ exports.acceptInvite = async (rawToken, userId, userEmail) => {
     }
   }
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await withLock(`members:${invite.workspaceId}`, async (tx) => {
     const alreadyMember = await tx.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId } },
     });
     if (!alreadyMember) {
-      await tx.workspaceMember.create({ data: { workspaceId: invite.workspaceId, userId, role: invite.role } });
+      // Counted again under the lock: two people accepting at once must not both take the last seat.
+      if (inviteWorkspace) {
+        const plan = effectivePlan(inviteWorkspace.owner);
+        if (
+          (await tx.workspaceMember.count({
+            where: { workspaceId: invite.workspaceId },
+          })) >= PLAN_LIMITS[plan].members
+        ) {
+          throw AppError.paymentRequired(
+            'This workspace has reached its member limit.',
+          );
+        }
+      }
+      await tx.workspaceMember.create({
+        data: { workspaceId: invite.workspaceId, userId, role: invite.role },
+      });
     }
     await tx.workspaceInvite.update({ where: { id: invite.id }, data: { status: 'accepted' } });
     // The token only went to this address, so holding it proves the address.
@@ -509,30 +598,40 @@ exports.leaveWorkspace = async (workspaceId, userId) => {
 // client, so it is never refused (an account over its limit can still do it).
 exports.enableShare = async (workspaceId, requesterId) => {
   await assertOwner(workspaceId, requesterId);
-  const current = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { shareEnabledAt: true } });
-  if (!current?.shareEnabledAt) {
-    const owner = await prisma.user.findUnique({
-      where: { id: requesterId },
-      select: { isPro: true, proLifetime: true, plan: true },
+  const { raw, tokenHash } = newInviteToken();
+  // Counted and written under one lock per owner, so two parallel requests cannot both see room.
+  const ws = await withLock(`clients:${requesterId}`, async (tx) => {
+    const current = await tx.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { shareEnabledAt: true },
     });
-    const plan = effectivePlan(owner);
-    const limit = PLAN_LIMITS[plan].clients;
-    if (Number.isFinite(limit)) {
-      const live = await prisma.workspace.count({
-        where: { ownerId: requesterId, shareEnabledAt: { not: null }, id: { not: workspaceId } },
+    if (!current?.shareEnabledAt) {
+      const owner = await tx.user.findUnique({
+        where: { id: requesterId },
+        select: { isPro: true, proLifetime: true, plan: true },
       });
-      if (live >= limit) {
-        throw AppError.paymentRequired(
-          `${PLAN_NAMES[plan]} includes ${limit} active client ${limit === 1 ? 'page' : 'pages'}${upgradeHint(plan)}`
-        );
+      const plan = effectivePlan(owner);
+      const limit = PLAN_LIMITS[plan].clients;
+      if (Number.isFinite(limit)) {
+        const live = await tx.workspace.count({
+          where: {
+            ownerId: requesterId,
+            shareEnabledAt: { not: null },
+            id: { not: workspaceId },
+          },
+        });
+        if (live >= limit) {
+          throw AppError.paymentRequired(
+            `${PLAN_NAMES[plan]} includes ${limit} active client ${limit === 1 ? 'page' : 'pages'}${upgradeHint(plan)}`,
+          );
+        }
       }
     }
-  }
-  const { raw, tokenHash } = newInviteToken();
-  const ws = await prisma.workspace.update({
-    where: { id: workspaceId },
-    data: { shareTokenHash: tokenHash, shareEnabledAt: new Date() },
-    select: { shareEnabledAt: true },
+    return tx.workspace.update({
+      where: { id: workspaceId },
+      data: { shareTokenHash: tokenHash, shareEnabledAt: new Date() },
+      select: { shareEnabledAt: true },
+    });
   });
   await audit.record({ type: 'share_link_enabled', actorId: requesterId, workspaceId });
   await analytics.track('status_link_created', { userId: requesterId, workspaceId });

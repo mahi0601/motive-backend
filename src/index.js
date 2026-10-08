@@ -3,4 +3,5 @@
 require('./instrument');
 // Loading config next validates env (and loads .env) before anything else boots.
 require('./config/env');
+require('./utils/applyMigrations')();
 require('./server');
