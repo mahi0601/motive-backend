@@ -19,6 +19,9 @@ const prisma = new PrismaClient({
     workspace: {
       shareTokenHash: true,
     },
+    statusSubscriber: {
+      tokenHash: true,
+    },
   },
 });
 

@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
+const { shareWhere } = require('../utils/shareToken');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
 const AppError = require('../utils/AppError');
@@ -555,7 +556,7 @@ exports.disableShare = async (workspaceId, requesterId) => {
 exports.assertOwner = (...args) => assertOwner(...args);
 
 exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
-  await assertOwner(workspaceId, requesterId);
+  const current = await assertOwner(workspaceId, requesterId);
 
   const text = (v) => (v === undefined ? undefined : v === null || v === '' ? null : String(v).trim() || null);
   const data = {
@@ -567,6 +568,8 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
     statusAllowRequests: input.allowRequests,
     statusRequestAllowance: input.requestAllowance,
     statusNotifyViews: input.notifyViews,
+    statusDigestEnabled: input.digestEnabled,
+    statusDigestDay: input.digestDay,
   };
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
 
@@ -578,6 +581,11 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
     date: input.milestoneDate === undefined ? undefined : input.milestoneDate ? new Date(input.milestoneDate) : null,
   };
 
+  // The weekly email links to the status page, so it needs a live link.
+  if (data.statusDigestEnabled === true && !current.shareEnabledAt) {
+    throw new AppError('Turn on the client status link before switching on the weekly email.', 422);
+  }
+
   if (data.statusHideBranding === true) {
     const owner = await prisma.user.findUnique({ where: { id: requesterId }, select: { isPro: true } });
     if (!owner?.isPro) {
@@ -588,7 +596,7 @@ exports.updateStatusPage = async (workspaceId, requesterId, input = {}) => {
   const ws = await prisma.workspace.update({
     where: { id: workspaceId },
     data,
-    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true, statusAllowRequests: true, statusRequestAllowance: true, statusNotifyViews: true },
+    select: { statusHeadline: true, statusSummary: true, statusAccent: true, statusHideBranding: true, statusAllowFeedback: true, statusAllowRequests: true, statusRequestAllowance: true, statusNotifyViews: true, statusDigestEnabled: true, statusDigestDay: true },
   });
   await applyFirstMilestone(workspaceId, firstMilestone);
   const first = await prisma.milestone.findFirst({ where: { workspaceId }, orderBy: { position: 'asc' }, select: { title: true, date: true } });
@@ -756,9 +764,8 @@ const weeklyThroughput = async (workspaceId) => {
 // a status and dates. The owner is warned in the UI that task
 // titles become public.
 exports.getStatusByToken = async (rawToken, { visitor, preview = false, automated = false } = {}) => {
-  const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
-  const ws = await prisma.workspace.findUnique({
-    where: { shareTokenHash: tokenHash },
+  const ws = await prisma.workspace.findFirst({
+    where: shareWhere(rawToken),
     select: {
       id: true,
       ownerId: true,

@@ -22,6 +22,8 @@ const EVENTS = [
   // Someone landed on the marketing page from the "Powered by" footer of a
   // status page: the growth loop, counted by visitor hash only.
   'landing_from_status',
+  // A weekly update email was sent to a client (one event per send, by workspace only).
+  'digest_sent',
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;

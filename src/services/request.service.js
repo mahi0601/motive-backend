@@ -7,6 +7,7 @@
 // follows the board without anyone updating it twice.
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
+const { shareWhere } = require('../utils/shareToken');
 const AppError = require('../utils/AppError');
 const audit = require('./audit.service');
 const analytics = require('./analytics.service');
@@ -45,9 +46,8 @@ const publicState = (r) => {
 };
 
 exports.submit = async (rawToken, input = {}) => {
-  const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
-  const ws = await prisma.workspace.findUnique({
-    where: { shareTokenHash: tokenHash },
+  const ws = await prisma.workspace.findFirst({
+    where: shareWhere(rawToken),
     select: { id: true, ownerId: true, name: true, statusAllowRequests: true },
   });
   if (!ws || !ws.statusAllowRequests) throw notAvailable();
@@ -79,6 +79,7 @@ exports.submit = async (rawToken, input = {}) => {
     },
   });
   require('../sockets/socket.handler').emitNotification(ws.ownerId, notification);
+  await require('./clientAlert.service').emailOwner({ ws, notification, kind: 'request' });
   await audit.record({ type: 'client_request_received', workspaceId: ws.id });
   await analytics.track('request_received', { workspaceId: ws.id });
   return { stored: true, id: row.id };

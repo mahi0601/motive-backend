@@ -13,6 +13,10 @@ const statusLimiter = rateLimit({
   message: { success: false, message: 'Too many requests, try again later.' },
 });
 
+// Declared before '/:token' so 'unsubscribe' is not taken for a share token.
+router.get('/unsubscribe/:token', statusLimiter, StatusController.unsubscribeInfo);
+router.post('/unsubscribe/:token', statusLimiter, StatusController.unsubscribe);
+
 router.get('/:token', statusLimiter, StatusController.getByToken);
 
 // The only unauthenticated write: much tighter than reading, because each post

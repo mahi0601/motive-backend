@@ -89,6 +89,8 @@ model User {
   // endpoint's week/month/quarter ranges in the user's own day, instead of
   // the database server's timezone — see statistics.service.js.
   timezone         String   @default("UTC")
+  // Email the owner when a client responds (approval, comment, request). On by default.
+  notifyClientResponsesByEmail Boolean @default(true)
   // Bumped on logout / password change to invalidate all outstanding refresh tokens.
   tokenVersion     Int      @default(0)
   // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed.
@@ -181,6 +183,13 @@ model Workspace {
   // notice per page per quiet period, and never for the owner's own preview or for link
   // previews and crawlers). On by default; the owner can switch it off.
   statusNotifyViews  Boolean  @default(true)
+  // Weekly "what moved" email to the people in `subscribers`. Off by default so no existing
+  // page starts mailing anyone. `statusDigestDay` is 0 (Sunday) to 6, read in the owner's
+  // timezone; `statusDigestLastSentAt` stops a second send in the same week.
+  statusDigestEnabled    Boolean   @default(false)
+  statusDigestDay        Int       @default(1)
+  statusDigestLastSentAt DateTime?
+  subscribers            StatusSubscriber[]
   // Bumped whenever the milestone's name or date changes. A client approval is
   // tied to the version it was given for, so changing the milestone starts a
   // clean slate (and reusing an old name later cannot revive an old approval).
@@ -318,6 +327,23 @@ model WorkspaceMember {
 // `inviteMember` used to require an existing account, which defeated the
 // point of inviting someone. `tokenHash` is sha256(raw); the raw token only
 // ever exists in the invite email, never stored — see workspace.service.js.
+// A person the owner has asked to receive the weekly update for one client. They never sign up.
+// `tokenHash` is the sha256 of a token derived from the id (see utils/shareToken.js), so the
+// email can carry a link without the raw value being stored: it opens the status page read and
+// write like the share link, and is also the unsubscribe credential. Removing the row kills it.
+model StatusSubscriber {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email          String
+  name           String?
+  tokenHash      String    @unique
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([workspaceId, email])
+}
+
 model WorkspaceInvite {
   id           String       @id @default(cuid())
   workspaceId  String

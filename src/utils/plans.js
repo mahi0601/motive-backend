@@ -13,9 +13,10 @@
 const PAID_PLANS = ['studio', 'agency'];
 
 const PLAN_LIMITS = {
-  free: { clients: 1, members: 2 },
-  studio: { clients: 10, members: 5 },
-  agency: { clients: Infinity, members: 15 },
+  // `subscribers`: people per client who get the weekly update email.
+  free: { clients: 1, members: 2, subscribers: 1 },
+  studio: { clients: 10, members: 5, subscribers: 10 },
+  agency: { clients: Infinity, members: 15, subscribers: 10 },
 };
 
 const PLAN_NAMES = { free: 'Free', studio: 'Studio', agency: 'Agency' };

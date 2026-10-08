@@ -17,7 +17,7 @@ function getClient() {
   return resendClient;
 }
 
-exports.sendEmail = async ({ to, subject, html }) => {
+exports.sendEmail = async ({ to, subject, html, text, headers }) => {
   const client = getClient();
   if (!client) {
     // Was interpolating the recipient's actual email address straight into
@@ -29,7 +29,7 @@ exports.sendEmail = async ({ to, subject, html }) => {
     return;
   }
   try {
-    await client.emails.send({ from: config.resend.fromEmail, to, subject, html });
+    await client.emails.send({ from: config.resend.fromEmail, to, subject, html, ...(text ? { text } : {}), ...(headers ? { headers } : {}) });
   } catch (err) {
     // Reportable: a real send failure (bad API key, Resend outage, domain
     // not verified) is exactly the kind of thing that used to be

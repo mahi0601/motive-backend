@@ -1,4 +1,6 @@
 const WorkspaceService = require('../services/workspace.service');
+const SubscriberService = require('../services/subscriber.service');
+const StatusDigestService = require('../services/statusDigest.service');
 const WorkspaceCopyService = require('../services/workspaceCopy.service');
 const FeedbackService = require('../services/feedback.service');
 const RequestService = require('../services/request.service');
@@ -129,4 +131,24 @@ exports.deleteRequest = asyncHandler(async (req, res) => {
 exports.disableShare = asyncHandler(async (req, res) => {
   await WorkspaceService.disableShare(req.params.id, req.user.id);
   res.json({ success: true });
+});
+
+exports.listSubscribers = asyncHandler(async (req, res) => {
+  const result = await SubscriberService.list(req.params.id, req.user.id);
+  res.json({ success: true, ...result });
+});
+
+exports.addSubscriber = asyncHandler(async (req, res) => {
+  const subscriber = await SubscriberService.add(req.params.id, req.user.id, req.body);
+  res.status(201).json({ success: true, subscriber });
+});
+
+exports.removeSubscriber = asyncHandler(async (req, res) => {
+  await SubscriberService.remove(req.params.id, req.params.subscriberId, req.user.id);
+  res.json({ success: true });
+});
+
+exports.previewWeeklyEmail = asyncHandler(async (req, res) => {
+  const result = await StatusDigestService.sendPreview(req.params.id, req.user.id);
+  res.json({ success: true, ...result });
 });

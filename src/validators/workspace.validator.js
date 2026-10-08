@@ -49,6 +49,8 @@ exports.statusPageRules = [
     .withMessage('requestAllowance must be a whole number from 1 to 100, or null to turn it off'),
   body('allowRequests').optional().isBoolean({ strict: true }).withMessage('allowRequests must be true or false'),
   body('notifyViews').optional().isBoolean({ strict: true }).withMessage('notifyViews must be true or false'),
+  body('digestEnabled').optional().isBoolean({ strict: true }).withMessage('digestEnabled must be true or false'),
+  body('digestDay').optional().isInt({ min: 0, max: 6 }).withMessage('digestDay must be a whole number from 0 (Sunday) to 6').toInt(),
 ];
 
 // The whole ordered list of milestones. Plain text, bounded; an item with an id
