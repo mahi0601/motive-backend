@@ -11,6 +11,7 @@ const app = require('./app');
 const logger = require('./config/logger');
 const { initSocket } = require('./sockets/socket.handler');
 const cleanupJob = require('./jobs/cleanup');
+const statusDigestJob = require('./jobs/statusDigest');
 
 // ── Boot ────────────────────────────────────────────────
 const server = http.createServer(app);
@@ -19,6 +20,7 @@ initSocket(server);
 connectDB()
   .then(() => {
     cleanupJob.start();
+    statusDigestJob.start();
     server.listen(config.port, () => {
       logger.info(`Server running at http://localhost:${config.port}`, { env: config.env });
     });

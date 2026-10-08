@@ -49,6 +49,19 @@ router.patch('/:id/requests/:requestId', WorkspaceController.updateRequest);
 router.delete('/:id/requests/:requestId', WorkspaceController.deleteRequest);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
+// A preview sends a real email, so it is capped well below the global limit.
+const previewLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number.parseInt(process.env.PREVIEW_EMAIL_RATE_MAX, 10) > 0 ? Number.parseInt(process.env.PREVIEW_EMAIL_RATE_MAX, 10) : 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many preview emails, try again later.' },
+});
+// Owner-only: who gets the weekly update email for this client, and a preview sent to the owner.
+router.get('/:id/subscribers', WorkspaceController.listSubscribers);
+router.post('/:id/subscribers', WorkspaceController.addSubscriber);
+router.delete('/:id/subscribers/:subscriberId', WorkspaceController.removeSubscriber);
+router.post('/:id/weekly-email/preview', previewLimiter, WorkspaceController.previewWeeklyEmail);
 // A copy can create hundreds of rows, so it is capped well below the global limit.
 // DUPLICATE_RATE_MAX can raise it (tests); only a positive number counts.
 const duplicateMax = Number.parseInt(process.env.DUPLICATE_RATE_MAX, 10);

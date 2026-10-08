@@ -26,6 +26,7 @@ exports.updateProfileRules = [
   body('name').optional().isString().trim().isLength({ min: 1, max: 80 }).withMessage('Name must be 1–80 characters'),
   body('avatar').optional({ nullable: true }).isString().isLength({ max: 2048 }),
   body('timezone').optional().isString().custom(isValidTimezone).withMessage('timezone must be a valid IANA time zone'),
+  body('notifyClientResponsesByEmail').optional().isBoolean({ strict: true }).withMessage('notifyClientResponsesByEmail must be true or false'),
 ];
 
 // A real boolean yes, not "true" or 1: this is the consent record.

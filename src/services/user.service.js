@@ -40,7 +40,7 @@ exports.acceptTerms = async (userId) => {
 exports.updateProfile = async (userId, data) => {
   // Whitelist updatable fields — never let a client patch password/email/tokenVersion here.
   const patch = {};
-  ['name', 'avatar', 'timezone'].forEach((k) => {
+  ['name', 'avatar', 'timezone', 'notifyClientResponsesByEmail'].forEach((k) => {
     if (k in data) patch[k] = data[k];
   });
   try {

@@ -2,6 +2,7 @@ const WorkspaceService = require('../services/workspace.service');
 const analytics = require('../services/analytics.service');
 const FeedbackService = require('../services/feedback.service');
 const RequestService = require('../services/request.service');
+const SubscriberService = require('../services/subscriber.service');
 const asyncHandler = require('../utils/asyncHandler');
 const { isAutomated } = require('../utils/automatedVisitors');
 
@@ -46,4 +47,17 @@ exports.landingFromStatus = asyncHandler(async (req, res) => {
   const visitor = analytics.visitorKey({ ip: req.ip, userAgent: req.get('user-agent') });
   await analytics.track('landing_from_status', { visitor });
   res.status(204).end();
+});
+
+// Public — the personal link in the weekly email is the credential.
+exports.unsubscribeInfo = asyncHandler(async (req, res) => {
+  const info = await SubscriberService.unsubscribeInfo(req.params.token);
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, ...info });
+});
+
+exports.unsubscribe = asyncHandler(async (req, res) => {
+  const info = await SubscriberService.unsubscribe(req.params.token);
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, ...info });
 });

@@ -5,9 +5,9 @@ const { PLAN_LIMITS, effectivePlan, limitsFor } = require('../src/utils/plans');
 
 describe('plan limits', () => {
   test('the numbers the pricing page promises', () => {
-    expect(PLAN_LIMITS.free).toEqual({ clients: 1, members: 2 });
-    expect(PLAN_LIMITS.studio).toEqual({ clients: 10, members: 5 });
-    expect(PLAN_LIMITS.agency).toEqual({ clients: Infinity, members: 15 });
+    expect(PLAN_LIMITS.free).toEqual({ clients: 1, members: 2, subscribers: 1 });
+    expect(PLAN_LIMITS.studio).toEqual({ clients: 10, members: 5, subscribers: 10 });
+    expect(PLAN_LIMITS.agency).toEqual({ clients: Infinity, members: 15, subscribers: 10 });
   });
 });
 
