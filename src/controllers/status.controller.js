@@ -1,6 +1,7 @@
 const WorkspaceService = require('../services/workspace.service');
 const analytics = require('../services/analytics.service');
 const FeedbackService = require('../services/feedback.service');
+const StatusLogoService = require('../services/statusLogo.service');
 const RequestService = require('../services/request.service');
 const SubscriberService = require('../services/subscriber.service');
 const asyncHandler = require('../utils/asyncHandler');
@@ -21,6 +22,22 @@ exports.getByToken = asyncHandler(async (req, res) => {
   // between the server and the viewer may cache this response.
   res.set('Cache-Control', 'no-store');
   res.json({ success: true, status });
+});
+
+// Public — the studio's logo for the page. The link is the credential; no logo, a lapsed plan and
+// a bad link are all the same 404. The image is not private (the page shows it), but it follows
+// the link, so it is only cached briefly and the page adds a version to the URL when it changes.
+exports.getLogo = asyncHandler(async (req, res) => {
+  const { mime, data } = await StatusLogoService.getByToken(req.params.token);
+  res.set({
+    'Content-Type': mime,
+    'Content-Length': String(data.length),
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'public, max-age=300',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+  });
+  res.send(data);
 });
 
 // Public — the link is the credential, and the service decides whether this

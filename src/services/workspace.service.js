@@ -875,6 +875,7 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       statusSummary: true,
       statusAccent: true,
       statusHideBranding: true,
+      statusLogoUpdatedAt: true,
       statusAllowFeedback: true,
       statusAllowRequests: true,
       statusRequestAllowance: true,
@@ -948,6 +949,9 @@ exports.getStatusByToken = async (rawToken, { visitor, preview = false, automate
       accent: ws.statusAccent,
       // Pro-only, re-checked on every read so a lapsed plan shows the footer again.
       hideBranding: ws.statusHideBranding && ws.owner.isPro,
+      // Also Pro-only and re-checked on every read. `logoVersion` changes when the logo does, so a cached image is replaced.
+      hasLogo: !!ws.statusLogoUpdatedAt && ws.owner.isPro,
+      ...(ws.statusLogoUpdatedAt && ws.owner.isPro ? { logoVersion: ws.statusLogoUpdatedAt.getTime() } : {}),
       allowFeedback: ws.statusAllowFeedback,
       allowRequests: ws.statusAllowRequests,
     },

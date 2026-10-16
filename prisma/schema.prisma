@@ -57,75 +57,75 @@ enum RecurrenceFrequency {
 }
 
 model User {
-  id               String   @id @default(cuid())
-  name             String
-  email            String   @unique
+  id                            String    @id @default(cuid())
+  name                          String
+  email                         String    @unique
   // Never selected by default — see `omit` config in src/config/prisma.js.
   // Nullable: a Google-only account (see auth.service.js#loginWithGoogle)
   // has no password to compare against.
-  password         String?
+  password                      String?
   // Set the first time a user signs in with Google — also used to link an
   // existing password-based account by matching email on first Google login.
-  googleId         String?  @unique
+  googleId                      String?   @unique
   // When this account proved it controls `email` (Google sign-in, completing a
   // password reset, accepting an invite sent to it, or clicking the emailed
   // verification link). Null = unproven. Sign-in is never blocked on it; it
   // gates things that can be abused from a throwaway account (sending invites)
   // and decides whether linking Google may keep an existing password.
-  emailVerifiedAt  DateTime?
+  emailVerifiedAt               DateTime?
   // Set when the person ticked "I am 16 or older and agree to the Terms and
   // Privacy Policy" at sign-up, with the version they saw (config/legal.js). Null
   // for accounts that predate the checkbox and for Google sign-ups, which have no
   // checkbox yet.
-  termsAcceptedAt  DateTime?
-  termsVersion     String?
+  termsAcceptedAt               DateTime?
+  termsVersion                  String?
   // True for a brand-new account made with Google, which has no sign-up checkbox: the
   // app holds it on an "agree to continue" page until it agrees (POST
   // /api/users/me/accept-terms). Existing accounts are never marked, so nobody is
   // locked out by this being introduced.
-  termsPending     Boolean  @default(false)
-  avatar           String   @default("")
+  termsPending                  Boolean   @default(false)
+  avatar                        String    @default("")
   // IANA zone name (e.g. "America/New_York"). Used to bucket the Momentum
   // endpoint's week/month/quarter ranges in the user's own day, instead of
   // the database server's timezone — see statistics.service.js.
-  timezone         String   @default("UTC")
+  timezone                      String    @default("UTC")
   // Email the owner when a client responds (approval, comment, request). On by default.
-  notifyClientResponsesByEmail Boolean @default(true)
+  notifyClientResponsesByEmail  Boolean   @default(true)
   // Bumped on logout / password change to invalidate all outstanding refresh tokens.
-  tokenVersion     Int      @default(0)
+  tokenVersion                  Int       @default(0)
   // One-time "Pro" upgrade, set by the Stripe webhook once payment is confirmed.
   // `isPro` is the ONE effective flag every gate reads (member cap, Momentum
   // periods, the UI). It is derived: `proLifetime || an active subscription`.
   // proLifetime marks the original one-time purchase (and was backfilled for
   // everyone who had isPro when subscriptions launched), so those users stay
   // Pro forever regardless of any subscription's lifecycle.
-  isPro            Boolean  @default(false)
-  proLifetime      Boolean  @default(false)
+  isPro                         Boolean   @default(false)
+  proLifetime                   Boolean   @default(false)
   // Which PAID tier ('studio' | 'agency'), set by the Stripe webhook; 'free'
   // otherwise. Never read directly: `effectivePlan` (utils/plans.js) combines it
   // with isPro/proLifetime, so a lapsed subscriber or a lifetime user can't be
   // given the wrong limits by a stale value here.
-  plan             String   @default("free")
-  stripeCustomerId String?
+  plan                          String    @default("free")
+  stripeCustomerId              String?
   // Monthly subscription state, kept in sync by Stripe webhooks (see
   // payment.service.js). stripeSubscriptionId is globally omitted from queries
   // (config/prisma.js) — the client never needs it.
-  stripeSubscriptionId         String?   @unique
-  subscriptionStatus           String?   // Stripe's status: active, trialing, past_due, unpaid, canceled, …
-  proPeriodEnd                 DateTime? // end of the paid period — "renews on" / "ends on"
-  subscriptionCancelAtPeriodEnd Boolean  @default(false)
+  stripeSubscriptionId          String?   @unique
+  subscriptionStatus            String? // Stripe's status: active, trialing, past_due, unpaid, canceled, …
+  proPeriodEnd                  DateTime? // end of the paid period — "renews on" / "ends on"
+  subscriptionCancelAtPeriodEnd Boolean   @default(false)
   // Which gateway holds this subscription: 'stripe' or 'razorpay' (null = never subscribed,
   // or a lifetime buyer). Razorpay's subscription id lives here, globally omitted from queries
   // like Stripe's (config/prisma.js). The other state columns above are shared by both.
-  paymentProvider              String?
-  razorpaySubscriptionId       String?   @unique
-  paypalSubscriptionId         String?   @unique
-  cashfreeSubscriptionId       String?   @unique
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  paymentProvider               String?
+  razorpaySubscriptionId        String?   @unique
+  paypalSubscriptionId          String?   @unique
+  cashfreeSubscriptionId        String?   @unique
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
 
   tasks           Task[]
-  assignedTasks   Task[]   @relation("TaskAssignee")
+  assignedTasks   Task[]            @relation("TaskAssignee")
   pages           Page[]
   workspacesOwned Workspace[]
   clientTemplates ClientTemplate[]
@@ -140,41 +140,46 @@ model User {
 }
 
 model Workspace {
-  id        String   @id @default(cuid())
-  name      String   @default("My Workspace")
-  icon      String   @default("🏠")
-  ownerId   String
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  members   WorkspaceMember[]
-  invites   WorkspaceInvite[]
-  pages     Page[]
-  tasks     Task[]
+  id                     String             @id @default(cuid())
+  name                   String             @default("My Workspace")
+  icon                   String             @default("🏠")
+  ownerId                String
+  owner                  User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members                WorkspaceMember[]
+  invites                WorkspaceInvite[]
+  pages                  Page[]
+  tasks                  Task[]
   // Public client status page (GET /api/status/:token). Only the sha256 of
   // the share token is stored — same pattern as WorkspaceInvite.tokenHash —
   // so a database read can't reveal a working link. `shareEnabledAt` is what
   // the UI reads to know sharing is on (the hash itself is globally omitted
   // from queries, see config/prisma.js); both are null when sharing is off.
-  shareTokenHash String?   @unique
-  shareEnabledAt DateTime?
+  shareTokenHash         String?            @unique
+  shareEnabledAt         DateTime?
   // What the owner chooses to show on that public page. All of it is PUBLIC to
   // anyone with the link, plain text only (length limits are enforced in
   // validators/workspace.validator.js). `statusAccent` is a key from
   // utils/statusAccents.js, never a free colour value. Hiding the "Powered by
   // Clientglass" footer is a Pro feature, checked on write and again when served.
-  statusHeadline     String?
-  statusSummary      String?
-  milestoneTitle     String?
-  milestoneDate      DateTime?
-  statusAccent       String   @default("teal")
-  statusHideBranding Boolean  @default(false)
+  statusHeadline         String?
+  statusSummary          String?
+  milestoneTitle         String?
+  milestoneDate          DateTime?
+  statusAccent           String             @default("teal")
+  statusHideBranding     Boolean            @default(false)
+  // The studio's own logo on the public page. The bytes live in WorkspaceLogo (so ordinary workspace
+  // queries never load them); this timestamp says whether there is one and busts caches. A paid
+  // feature, checked on write and again when served, like statusHideBranding.
+  statusLogoUpdatedAt    DateTime?
+  logo                   WorkspaceLogo?
   // Whether the public page offers the "approve / request changes / comment"
   // form. Off by default: turning it on opens an unauthenticated write
   // endpoint, so the owner opts in.
-  statusAllowFeedback Boolean @default(false)
+  statusAllowFeedback    Boolean            @default(false)
   // Whether the public page also offers "ask for something", which the owner can
   // turn into a task (see ClientRequest). Its own switch, off by default, for the
   // same reason: it opens an unauthenticated write endpoint.
-  statusAllowRequests Boolean @default(false)
+  statusAllowRequests    Boolean            @default(false)
   // How many accepted "in scope" requests a month the owner includes for this client
   // (1 to 100). Null = no allowance. When set it is PUBLIC on the status page, as a
   // count of used against included (see request.service.js#allowanceUsage).
@@ -182,27 +187,27 @@ model Workspace {
   // Whether the owner is told, in the app, when someone opens the status page (at most one
   // notice per page per quiet period, and never for the owner's own preview or for link
   // previews and crawlers). On by default; the owner can switch it off.
-  statusNotifyViews  Boolean  @default(true)
+  statusNotifyViews      Boolean            @default(true)
   // Weekly "what moved" email to the people in `subscribers`. Off by default so no existing
   // page starts mailing anyone. `statusDigestDay` is 0 (Sunday) to 6, read in the owner's
   // timezone; `statusDigestLastSentAt` stops a second send in the same week.
-  statusDigestEnabled    Boolean   @default(false)
-  statusDigestDay        Int       @default(1)
+  statusDigestEnabled    Boolean            @default(false)
+  statusDigestDay        Int                @default(1)
   statusDigestLastSentAt DateTime?
   subscribers            StatusSubscriber[]
   // Bumped whenever the milestone's name or date changes. A client approval is
   // tied to the version it was given for, so changing the milestone starts a
   // clean slate (and reusing an old name later cannot revive an old approval).
-  milestoneVersion   Int      @default(0)
+  milestoneVersion       Int                @default(0)
   // milestoneTitle, milestoneDate and milestoneVersion above are the ORIGINAL single
   // milestone. They are no longer read or written: the Milestone table below is the
   // source of truth (a migration moved each one across). They are kept, unused, so
   // the migration is additive; a later one can drop them.
-  milestones         Milestone[]
-  feedback           ClientFeedback[]
-  requests           ClientRequest[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  milestones             Milestone[]
+  feedback               ClientFeedback[]
+  requests               ClientRequest[]
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   @@index([ownerId])
 }
@@ -215,14 +220,14 @@ model Workspace {
 // (a client says WHICH milestone they approve) and are always checked against the
 // workspace on write.
 model Milestone {
-  id          String    @id @default(cuid())
+  id          String           @id @default(cuid())
   workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   title       String
   date        DateTime?
   position    Int
-  version     Int       @default(0)
-  createdAt   DateTime  @default(now())
+  version     Int              @default(0)
+  createdAt   DateTime         @default(now())
   feedback    ClientFeedback[]
 
   @@index([workspaceId, position])
@@ -249,21 +254,21 @@ model ClientTemplate {
 // so the history still makes sense after the owner edits it. Plain text only.
 // Pruned after a year by jobs/cleanup.js.
 model ClientFeedback {
-  id             String    @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  kind           String // 'comment' | 'approve' | 'changes'
-  authorName     String
-  message        String    @default("")
-  milestoneTitle String?
+  id               String     @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind             String // 'comment' | 'approve' | 'changes'
+  authorName       String
+  message          String     @default("")
+  milestoneTitle   String?
   // Which milestone, and which version of it, this was about (see Milestone). The id
   // goes null if the owner later removes the milestone; the title above is the
   // snapshot that keeps the history readable.
-  milestoneId    String?
-  milestone      Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
-  milestoneVersion Int     @default(0)
-  readAt         DateTime?
-  createdAt      DateTime  @default(now())
+  milestoneId      String?
+  milestone        Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  milestoneVersion Int        @default(0)
+  readAt           DateTime?
+  createdAt        DateTime   @default(now())
 
   @@index([workspaceId, createdAt])
 }
@@ -345,18 +350,18 @@ model StatusSubscriber {
 }
 
 model WorkspaceInvite {
-  id           String       @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  email        String
-  role         WorkspaceRole @default(editor)
-  tokenHash    String       @unique
-  status       InviteStatus @default(pending)
-  invitedById  String
-  invitedBy    User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
-  expiresAt    DateTime
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email       String
+  role        WorkspaceRole @default(editor)
+  tokenHash   String        @unique
+  status      InviteStatus  @default(pending)
+  invitedById String
+  invitedBy   User          @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   // A re-invite recycles this row (new token, reset expiry) instead of
   // inserting a second pending invite for the same email.
@@ -389,67 +394,67 @@ model Page {
 }
 
 model Block {
-  id        String    @id @default(cuid())
-  pageId    String
-  page      Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  type      BlockType @default(paragraph)
+  id            String    @id @default(cuid())
+  pageId        String
+  page          Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  type          BlockType @default(paragraph)
   // Freeform payload: { text, checked, language, url, caption, collapsed, color, ... }
-  content   Json      @default("{}")
-  position  Int       @default(0)
+  content       Json      @default("{}")
+  position      Int       @default(0)
   // One level of nesting under a 'toggle' block — null for top-level blocks.
   // `position` is scoped within siblings sharing the same parentBlockId, so
   // reordering children never touches top-level positions and vice versa.
   parentBlockId String?
-  parent        Block?  @relation("BlockChildren", fields: [parentBlockId], references: [id], onDelete: Cascade)
-  children      Block[] @relation("BlockChildren")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  parent        Block?    @relation("BlockChildren", fields: [parentBlockId], references: [id], onDelete: Cascade)
+  children      Block[]   @relation("BlockChildren")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([pageId])
   @@index([parentBlockId])
 }
 
 model Task {
-  id          String       @id @default(cuid())
-  title       String
-  description String?
-  priority    TaskPriority @default(Low)
-  status      TaskStatus   @default(todo)
-  category    String       @default("Personal")
-  dueDate     DateTime?
+  id            String               @id @default(cuid())
+  title         String
+  description   String?
+  priority      TaskPriority         @default(Low)
+  status        TaskStatus           @default(todo)
+  category      String               @default("Personal")
+  dueDate       DateTime?
   // Set/cleared whenever `status` transitions to/from 'done' (task.service.js)
   // — the source of truth for "completed" stats, since `updatedAt` also
   // changes on unrelated edits.
-  completedAt DateTime?
-  tags        String[]     @default([])
+  completedAt   DateTime?
+  tags          String[]             @default([])
   // Null = one-off task. When set, completing this task creates the next
   // occurrence (see task.service.js#update) rather than a scheduled job
   // generating instances ahead of time — simpler, and naturally idempotent
   // (one next-occurrence per completion, no risk of double-generating).
-  recurrence  RecurrenceFrequency?
-  position    Int?
-  userId      String
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recurrence    RecurrenceFrequency?
+  position      Int?
+  userId        String
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Nullable so a personal (solo) task is unaffected — backfilled to the
   // owner's default workspace for every existing task (see
   // scripts/backfill-task-workspace.js), so it's always set going forward.
   // Cascade on delete mirrors Page.workspaceId's existing behavior.
-  workspaceId String?
-  workspace   Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId   String?
+  workspace     Workspace?           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   // Who the task is for, distinct from `userId` (who created it) — the two
   // are the same person for every solo task today. SetNull, not Cascade: the
   // assignee leaving a workspace (or their account being deleted) should
   // unassign the task, not delete work owned by someone else.
-  assigneeId  String?
-  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  subtasks    Subtask[]
-  comments    Comment[]
-  files       File[]
-  activityLogs ActivityLog[]
+  assigneeId    String?
+  assignee      User?                @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  subtasks      Subtask[]
+  comments      Comment[]
+  files         File[]
+  activityLogs  ActivityLog[]
   // The client request this task was made from, if any (see ClientRequest).
   clientRequest ClientRequest?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
 
   // Hot path: "all of a user's tasks, ordered" / date-range lookups / board+stats filters.
   @@index([userId, position])
@@ -545,15 +550,15 @@ model ActivityLog {
 // JWT: a random, server-tracked, delete-on-use code can't be replayed even
 // within its own expiry window once the legitimate exchange happens.
 model NativeExchangeCode {
-  code      String   @id
-  userId    String
+  code          String   @id
+  userId        String
   // PKCE (RFC 7636, S256): base64url(sha256(code_verifier)) supplied by the
   // app when it started sign-in. The exchange must present the matching
   // verifier, so another app that registers the same custom URL scheme and
   // intercepts the deep link still can't redeem the code.
   codeChallenge String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
 }
 
 // One row per login (browser, device, app). The refresh token carries this id
@@ -650,4 +655,14 @@ model ProviderPlan {
   createdAt      DateTime @default(now())
 
   @@unique([provider, plan, currency, amount])
+}
+
+// A studio's logo for the public status page: PNG or JPEG only, up to 256 KB, checked by its
+// first bytes. One row per workspace, served by the API at /api/status/:token/logo.
+model WorkspaceLogo {
+  workspaceId String    @id
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  mime        String
+  data        Bytes
+  updatedAt   DateTime  @updatedAt
 }
