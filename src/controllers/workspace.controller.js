@@ -152,3 +152,7 @@ exports.previewWeeklyEmail = asyncHandler(async (req, res) => {
   const result = await StatusDigestService.sendPreview(req.params.id, req.user.id);
   res.json({ success: true, ...result });
 });
+
+exports.updateSummary = asyncHandler(async (req, res) => {
+  res.json({ success: true, summary: await StatusDigestService.updateSummary(req.params.id, req.user.id) });
+});

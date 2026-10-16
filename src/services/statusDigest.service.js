@@ -141,3 +141,24 @@ exports.sendPreview = async (workspaceId, requesterId) => {
   await sendTo({ to: owner.email, token: 'c_preview', ws, data, preview: true });
   return { sentTo: owner.email };
 };
+
+// Owner-only: the same "what moved" facts the weekly email uses, as data, so the owner can send a
+// short progress note on WhatsApp or by hand. Nothing is sent or stored, and the share link is not
+// part of it (the server never has the raw link after it is created).
+exports.updateSummary = async (workspaceId, requesterId) => {
+  await workspaceService.assertOwner(workspaceId, requesterId);
+  const [ws, data] = await Promise.all([
+    prisma.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } }),
+    exports.collect(workspaceId),
+  ]);
+  if (exports.isEmpty(data)) throw new AppError('Nothing finished or in progress yet, so there is nothing to share.', 422);
+  return {
+    workspaceName: ws.name,
+    windowDays: WINDOW_DAYS,
+    shippedCount: data.shippedCount,
+    shipped: data.shipped.map((t) => t.title),
+    inProgress: data.inProgress.map((t) => t.title),
+    upcoming: data.upcoming.map((t) => ({ title: t.title, due: t.dueDate.toISOString() })),
+    milestone: data.milestone ? { title: data.milestone.title, date: data.milestone.date.toISOString() } : null,
+  };
+};
