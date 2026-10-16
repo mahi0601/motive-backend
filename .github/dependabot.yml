@@ -4,6 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Prisma 7 drops `url` in schema.prisma and breaks `prisma generate`;
+    # migrate on purpose, not through an automated bump.
+    ignore:
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
     groups:
       # One PR per week for routine patch/minor bumps instead of one per
       # package — the two upstream-unfixed vulns (express->qs, prisma->
