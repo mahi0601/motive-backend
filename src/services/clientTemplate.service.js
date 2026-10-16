@@ -8,12 +8,15 @@ const audit = require('./audit.service');
 const workspaceService = require('./workspace.service');
 const copy = require('./workspaceCopy.service');
 const withLock = require('../utils/advisoryLock');
+const builtins = require('../data/builtinClientTemplates');
 
 const MAX_TEMPLATES = 20;
 const MAX_SNAPSHOT_BYTES = 2_000_000;
 
 const countsOf = (s) => ({ tasks: s?.tasks?.length ?? 0, pages: s?.pages?.length ?? 0, milestones: s?.milestones?.length ?? 0 });
 const present = (t) => ({ id: t.id, name: t.name, description: t.description, createdAt: t.createdAt, counts: countsOf(t.snapshot) });
+// Starter templates ship with the app: no owner, not counted against MAX_TEMPLATES, never editable.
+const presentBuiltin = (t) => ({ id: t.id, name: t.name, description: t.description, createdAt: null, builtin: true, counts: countsOf(t.snapshot) });
 
 exports.save = async (ownerId, { workspaceId, name, description = '' }) => {
   await workspaceService.assertOwner(workspaceId, ownerId);
@@ -50,16 +53,17 @@ exports.save = async (ownerId, { workspaceId, name, description = '' }) => {
 
 exports.list = async (ownerId) => {
   const rows = await prisma.clientTemplate.findMany({ where: { ownerId }, orderBy: { createdAt: 'desc' } });
-  return rows.map(present);
+  return [...builtins.listBuiltin().map(presentBuiltin), ...rows.map(present)];
 };
 
 exports.remove = async (ownerId, id) => {
+  if (builtins.isBuiltinId(id)) throw AppError.conflict('Starter templates cannot be deleted.');
   const { count } = await prisma.clientTemplate.deleteMany({ where: { id, ownerId } });
   if (!count) throw AppError.notFound('Template not found');
 };
 
 exports.use = async (ownerId, id, input = {}) => {
-  const template = await prisma.clientTemplate.findFirst({ where: { id, ownerId } });
+  const template = builtins.getBuiltin(id) || (builtins.isBuiltinId(id) ? null : await prisma.clientTemplate.findFirst({ where: { id, ownerId } }));
   if (!template) throw AppError.notFound('Template not found');
   const include = { tasks: true, pages: true, milestones: true, statusText: true, ...(input.include || {}) };
   const start = input.startDate ? new Date(input.startDate) : null;
