@@ -1,6 +1,7 @@
 const WorkspaceService = require('../services/workspace.service');
 const SubscriberService = require('../services/subscriber.service');
 const StatusDigestService = require('../services/statusDigest.service');
+const StatusLogoService = require('../services/statusLogo.service');
 const WorkspaceCopyService = require('../services/workspaceCopy.service');
 const FeedbackService = require('../services/feedback.service');
 const RequestService = require('../services/request.service');
@@ -151,6 +152,16 @@ exports.removeSubscriber = asyncHandler(async (req, res) => {
 exports.previewWeeklyEmail = asyncHandler(async (req, res) => {
   const result = await StatusDigestService.sendPreview(req.params.id, req.user.id);
   res.json({ success: true, ...result });
+});
+
+exports.saveStatusLogo = asyncHandler(async (req, res) => {
+  const result = await StatusLogoService.save(req.params.id, req.user.id, req.file);
+  res.json({ success: true, ...result });
+});
+
+exports.removeStatusLogo = asyncHandler(async (req, res) => {
+  await StatusLogoService.remove(req.params.id, req.user.id);
+  res.json({ success: true });
 });
 
 exports.updateSummary = asyncHandler(async (req, res) => {

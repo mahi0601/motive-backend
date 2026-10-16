@@ -58,6 +58,7 @@ describe('status page details', () => {
       milestones: [{ id: expect.any(String), title: 'Design sign-off', date: '2026-12-01T00:00:00.000Z', approvedAt: null }],
       accent: 'violet',
       hideBranding: false,
+      hasLogo: false,
       allowFeedback: false,
       allowRequests: false,
     });
@@ -70,7 +71,7 @@ describe('status page details', () => {
     try {
       const fresh = await makeWorkspaceWithMembers(other);
       const view = await publicView(fresh, other);
-      expect(view.body.status.page).toEqual({ headline: null, summary: null, milestones: [], milestone: null, accent: 'teal', hideBranding: false, allowFeedback: false, allowRequests: false });
+      expect(view.body.status.page).toEqual({ headline: null, summary: null, milestones: [], milestone: null, accent: 'teal', hideBranding: false, hasLogo: false, allowFeedback: false, allowRequests: false });
     } finally {
       await cleanupUsers(other);
     }

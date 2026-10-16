@@ -18,6 +18,7 @@ router.get('/unsubscribe/:token', statusLimiter, StatusController.unsubscribeInf
 router.post('/unsubscribe/:token', statusLimiter, StatusController.unsubscribe);
 
 router.get('/:token', statusLimiter, StatusController.getByToken);
+router.get('/:token/logo', statusLimiter, StatusController.getLogo);
 
 // The only unauthenticated write: much tighter than reading, because each post
 // stores a row and notifies the owner. Per client ip; the service adds a

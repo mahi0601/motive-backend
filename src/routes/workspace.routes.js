@@ -1,8 +1,11 @@
 const rateLimit = require('express-rate-limit');
 const router = require('express').Router();
+const multer = require('multer');
 const WorkspaceController = require('../controllers/workspace.controller');
 const auth = require('../middlewares/auth.middleware');
 const validate = require('../middlewares/validate.middleware');
+const { limitConcurrentUploads } = require('../middlewares/uploadConcurrency.middleware');
+const { MAX_BYTES: LOGO_MAX_BYTES } = require('../services/statusLogo.service');
 const { inviteRules, roleUpdateRules, createWorkspaceRules, statusPageRules, milestonesRules, duplicateWorkspaceRules } = require('../validators/workspace.validator');
 
 // Scoped to just create/resend — the two routes that can spam someone's
@@ -47,6 +50,19 @@ router.post('/:id/requests/:requestId/accept', WorkspaceController.acceptRequest
 router.post('/:id/requests/:requestId/decline', WorkspaceController.declineRequest);
 router.patch('/:id/requests/:requestId', WorkspaceController.updateRequest);
 router.delete('/:id/requests/:requestId', WorkspaceController.deleteRequest);
+// Owner-only: the studio's logo for the public page. Memory only and capped at the logo limit; the
+// service checks the file's first bytes and the plan. Its own write limit, since each upload is a row.
+const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LOGO_MAX_BYTES, files: 1 } });
+const logoMax = Number.parseInt(process.env.LOGO_RATE_MAX, 10);
+const logoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: logoMax > 0 ? logoMax : 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many logo changes, try again later.' },
+});
+router.put('/:id/status-logo', logoLimiter, limitConcurrentUploads(5), logoUpload.single('logo'), WorkspaceController.saveStatusLogo);
+router.delete('/:id/status-logo', logoLimiter, WorkspaceController.removeStatusLogo);
 // Owner-only: what the public page says about the project (headline, summary, milestone, accent).
 router.patch('/:id/status-page', statusPageRules, validate, WorkspaceController.updateStatusPage);
 // A preview sends a real email, so it is capped well below the global limit.
