@@ -152,9 +152,10 @@ describe('client templates', () => {
       const b = (await save(owner, { name: 'B' })).body.template.id;
       const mine = await list(owner);
       expect(mine.status).toBe(200);
-      expect(mine.body.templates.map((t) => t.id)).toEqual([b, a]);
-      expect(Object.keys(mine.body.templates[0]).sort()).toEqual(['counts', 'createdAt', 'description', 'id', 'name']);
-      expect((await list(stranger)).body.templates).toEqual([]);
+      const own = mine.body.templates.filter((t) => !t.builtin);
+      expect(own.map((t) => t.id)).toEqual([b, a]);
+      expect(Object.keys(own[0]).sort()).toEqual(['counts', 'createdAt', 'description', 'id', 'name']);
+      expect((await list(stranger)).body.templates.filter((t) => !t.builtin)).toEqual([]);
       expect((await request(app).get('/api/client-templates')).status).toBe(401);
     });
 
