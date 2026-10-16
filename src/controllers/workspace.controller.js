@@ -163,3 +163,7 @@ exports.removeStatusLogo = asyncHandler(async (req, res) => {
   await StatusLogoService.remove(req.params.id, req.user.id);
   res.json({ success: true });
 });
+
+exports.updateSummary = asyncHandler(async (req, res) => {
+  res.json({ success: true, summary: await StatusDigestService.updateSummary(req.params.id, req.user.id) });
+});

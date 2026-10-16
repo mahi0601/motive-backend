@@ -78,6 +78,8 @@ router.get('/:id/subscribers', WorkspaceController.listSubscribers);
 router.post('/:id/subscribers', WorkspaceController.addSubscriber);
 router.delete('/:id/subscribers/:subscriberId', WorkspaceController.removeSubscriber);
 router.post('/:id/weekly-email/preview', previewLimiter, WorkspaceController.previewWeeklyEmail);
+// Owner-only: facts for a short progress note to send by hand (WhatsApp, email). Sends nothing.
+router.get('/:id/update-summary', WorkspaceController.updateSummary);
 // A copy can create hundreds of rows, so it is capped well below the global limit.
 // DUPLICATE_RATE_MAX can raise it (tests); only a positive number counts.
 const duplicateMax = Number.parseInt(process.env.DUPLICATE_RATE_MAX, 10);
